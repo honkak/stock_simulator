@@ -172,6 +172,10 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate
                 final_rate = aligned_rate.loc[date]
                 cumulative[date] = shares * price * final_rate
                 
+        # --- CRITICAL FIX: Series 이름을 종목 코드로 명시적으로 설정 ---
+        cumulative.name = code
+        # -------------------------------------------------------------
+                
         # 첫 투자 시점 이후 데이터만 반환
         return cumulative[cumulative.cumsum() != 0] 
         
@@ -332,8 +336,8 @@ if codes:
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                             # x=1.21으로 조정하여 오른쪽으로 더 이동
-                             x=1.21, 
+                             # x=1.30으로 조정하여 오른쪽으로 더 이동
+                             x=1.30, 
                              y=0.7, 
                              showactive=False,
                              buttons=[
