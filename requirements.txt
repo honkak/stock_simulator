@@ -5,3 +5,4 @@ beautifulsoup4>=4.9.3
 plotly>=5.0.0
 yfinance
 streamlit-analytics
+Plotly
