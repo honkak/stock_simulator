@@ -273,14 +273,14 @@ if codes:
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                             # x=1.2로 조정하여 차트와 범례 영역 밖으로 확실히 분리
-                             x=1.25, 
+                             # x=1.15로 조정하여 왼쪽으로 이동
+                             x=1.15, 
                              y=0.7, 
                              showactive=False,
                              buttons=[
                                  dict(label="▶️ 재생 시작", 
                                       method="animate", 
-                                      args=[None, {"frame": {"duration": 75, "redraw": True}, # 속도 조정 (75ms/월)
+                                      args=[None, {"frame": {"duration": 150, "redraw": True}, # 속도 2배 늦춤 (150ms/월)
                                                    "fromcurrent": True, 
                                                    "transition": {"duration": 20, "easing": "linear"}}]), # 반응 속도 개선
                                  dict(label="⏸️ 정지", 
