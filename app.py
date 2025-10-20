@@ -273,8 +273,8 @@ if codes:
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                             # x=1.15로 조정하여 왼쪽으로 이동
-                             x=1.15, 
+                             # x=1.20으로 조정하여 오른쪽으로 더 이동
+                             x=1.20, 
                              y=0.7, 
                              showactive=False,
                              buttons=[
