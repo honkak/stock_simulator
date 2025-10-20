@@ -242,7 +242,7 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate
 # ==============================================================================
 # 3. 메인 실행 블록
 # ==============================================================================
-st.markdown("<h2 style='font-size: 24px; text-align: center; margin-bottom: 20px;'>💰 적립식 투자 시뮬레이션 (부드러운 Plotly 애니메이션) 📈</h2>", unsafe_allow_html=True)
+st.markdown("<h2 style='font-size: 24px; text-align: center; margin-bottom: 20px;'>💰 다빈치 적립식 주식투자 시뮬레이션 📈</h2>", unsafe_allow_html=True)
 
 # 1.1. 날짜 입력
 col_start_date, col_end_date = st.columns(2)
@@ -448,7 +448,7 @@ if codes:
         fig.update_layout(
             updatemenus=[dict(type="buttons",
                               x=1.03,  # ⭐ 왼쪽으로 이동 (1.21 -> 1.05)
-                              y=0.5,  # ⭐ 아래로 이동 (0.7 -> 0.25)
+                              y=0.25,  # ⭐ 아래로 이동 (0.7 -> 0.25)
                               showactive=False,
                               xanchor='left', # x=1.05를 기준으로 버튼을 왼쪽에 고정
                               yanchor='middle', # y=0.25를 기준으로 버튼을 중앙에 고정
