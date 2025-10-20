@@ -345,7 +345,7 @@ if codes:
         fig.update_layout(
             updatemenus=[dict(type="buttons",
                               x=1.03,  # ⭐ 왼쪽으로 이동 (1.21 -> 1.05)
-                              y=0.5,  # ⭐ 아래로 이동 (0.7 -> 0.25)
+                              y=0.3,  # ⭐ 아래로 이동 (0.7 -> 0.25)
                               showactive=False,
                               xanchor='left', # x=1.05를 기준으로 버튼을 왼쪽에 고정
                               yanchor='middle', # y=0.25를 기준으로 버튼을 중앙에 고정
