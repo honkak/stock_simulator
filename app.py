@@ -5,8 +5,12 @@ import pandas as pd
 import plotly.graph_objects as go # Plotly graph_objects 사용
 
 # ==============================================================================
-# 0. UI Helper Functions
+# 0. Session State 및 UI Helper Functions
 # ==============================================================================
+
+# 차트 표시 모드 초기화 ('animation' 또는 'static')
+if 'display_mode' not in st.session_state:
+    st.session_state.display_mode = 'animation'
 
 # 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수
 def display_final_summary_table(data, principal_series):
@@ -120,7 +124,6 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount):
 # ==============================================================================
 
 if codes:
-    st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
     
     dfs = []
     for c in codes:
@@ -149,7 +152,28 @@ if codes:
     data['총 적립 원금'] = cumulative_principal
 
     # ==============================================================================
-    # 3.2. Plotly go.Figure 기반 애니메이션 (월별 프레임 최적화)
+    # 3.2. 제목 및 버튼 (좌우 배치)
+    # ==============================================================================
+    col_title, col_button = st.columns([1, 0.4])
+
+    with col_title:
+        st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
+
+    with col_button:
+        # '최종 결과 바로 표시' 버튼 로직 (상태 토글)
+        button_label = '최종 결과 바로 표시' if st.session_state.display_mode == 'animation' else '애니메이션 모드로 돌아가기'
+        if st.button(
+            button_label,
+            use_container_width=True, 
+            key='toggle_result',
+            help="차트 표시 모드를 전환합니다."
+        ):
+            st.session_state.display_mode = 'static' if st.session_state.display_mode == 'animation' else 'animation'
+            st.rerun() # 상태가 변경되었으므로 재실행하여 차트를 다시 그립니다.
+
+
+    # ==============================================================================
+    # 3.3. Plotly go.Figure 기반 애니메이션 (월별 프레임 최적화)
     # ==============================================================================
     
     # 1. 월별 첫 거래일 인덱스 추출 (프레임 최적화)
@@ -159,36 +183,42 @@ if codes:
     
     # 2. 프레임 생성
     frames = []
-    for date in monthly_indices:
-        k = data.index.get_loc(date) 
-        
-        frame_data = []
-        for col in data.columns:
-            # 원금 라인은 밝은 회색 점선으로 특별 스타일링
-            line_style = dict(color='lightgray', width=2, dash='dash') if col == '총 적립 원금' else None
+    # 애니메이션 모드일 경우에만 프레임을 생성
+    if st.session_state.display_mode == 'animation':
+        for date in monthly_indices:
+            k = data.index.get_loc(date) 
             
-            frame_data.append(
-                go.Scatter(
-                    x=data.index[:k+1], 
-                    y=data[col][:k+1], 
-                    mode='lines', 
-                    name=col,
-                    line=line_style if line_style else None
+            frame_data = []
+            for col in data.columns:
+                # 원금 라인은 밝은 회색 점선으로 특별 스타일링
+                line_style = dict(color='lightgray', width=2, dash='dash') if col == '총 적립 원금' else None
+                
+                frame_data.append(
+                    go.Scatter(
+                        x=data.index[:k+1], 
+                        y=data[col][:k+1], 
+                        mode='lines', 
+                        name=col,
+                        line=line_style if line_style else None
+                    )
                 )
-            )
 
-        frames.append(go.Frame(data=frame_data, name=date.strftime('%Y-%m-%d'), 
-                               layout=go.Layout(title=f"누적 자산 가치 변화 (시점: {date.strftime('%Y년 %m월')})")))
-        
-    # 3. 초기 데이터 트레이스 생성
+            frames.append(go.Frame(data=frame_data, name=date.strftime('%Y-%m-%d'), 
+                                   layout=go.Layout(title=f"누적 자산 가치 변화 (시점: {date.strftime('%Y년 %m월')})")))
+    
+    # 3. 초기/정적 데이터 트레이스 생성
     initial_data = []
+    
+    # 정적 모드일 경우 모든 데이터를 포함
+    data_to_render = data if st.session_state.display_mode == 'static' else data.iloc[[0]]
+
     for col in data.columns:
         line_style = dict(color='lightgray', width=2, dash='dash') if col == '총 적립 원금' else None
         
         initial_data.append(
             go.Scatter(
-                x=[data.index[0]], 
-                y=[data[col].iloc[0]], 
+                x=data_to_render.index, 
+                y=data_to_render[col], 
                 mode='lines', 
                 name=col,
                 line=line_style if line_style else None
@@ -203,10 +233,16 @@ if codes:
             xaxis=dict(title="날짜"),
             yaxis=dict(title="가치 (원)", range=[0, data.max().max() * 1.1], tickformat=',.0f'),
             height=550,
-            # 버튼을 차트 영역 바깥 (top-left)으로 이동하여 차트를 가리지 않도록 함
+        ),
+        frames=frames
+    )
+    
+    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (차트 하단으로 이동)
+    if st.session_state.display_mode == 'animation':
+        fig.update_layout(
             updatemenus=[dict(type="buttons",
                              x=0.01, # x축 위치 (차트 왼쪽 끝)
-                             y=1.05, # y축 위치 (차트 위쪽 여백)
+                             y=0.01, # y축 위치 (차트 아래쪽) <- 겹침 방지 수정
                              showactive=False,
                              buttons=[
                                  dict(label="▶️ 재생 시작", 
@@ -218,13 +254,15 @@ if codes:
                                       method="animate", 
                                       args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])
                              ])]
-        ),
-        frames=frames
-    )
-    
+        )
+
     # 5. 차트 표시
     st.plotly_chart(fig, use_container_width=True)
-    st.caption("차트 상단의 '▶️ 재생 시작' 버튼과 하단의 시간 슬라이더를 사용하여 애니메이션을 제어하세요. (차트 하단 표는 최종 결과만 표시됩니다.)")
+    
+    if st.session_state.display_mode == 'animation':
+        st.caption("차트 하단의 '▶️ 재생 시작' 버튼과 시간 슬라이더를 사용하여 애니메이션을 제어하세요.")
+    else:
+        st.caption("현재 '최종 결과 바로 표시' 모드입니다. 왼쪽 버튼을 눌러 애니메이션 모드로 전환하세요.")
 
     # 6. 최종 요약 테이블 표시
     display_final_summary_table(data, cumulative_principal)
