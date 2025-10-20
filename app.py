@@ -269,7 +269,9 @@ if codes:
             
             frame_data = []
             for col in data.columns:
-                line_style = dict(color='lightgray', width=2, dash='dash') if col == '총 적립 원금' else None
+                # --- 수정된 부분: 짙은 회색 ('dimgray')와 촘촘한 점선 ('dot') 적용 ---
+                line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
+                # ------------------------------------------------------------------
                 
                 frame_data.append(
                     go.Scatter(
@@ -301,7 +303,9 @@ if codes:
     data_to_render = data if st.session_state.display_mode == 'static' else data.iloc[[0]]
 
     for col in data.columns:
-        line_style = dict(color='lightgray', width=2, dash='dash') if col == '총 적립 원금' else None
+        # --- 수정된 부분: 짙은 회색 ('dimgray')와 촘촘한 점선 ('dot') 적용 ---
+        line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
+        # ------------------------------------------------------------------
         
         initial_data.append(
             go.Scatter(
