@@ -9,10 +9,13 @@ import time # 실시간 업데이트를 위한 지연 시간 제어
 # 0. Session State 및 UI Helper Functions
 # ==============================================================================
 
-# 차트 표시 모드 초기화 ('animation' 또는 'static')
-# Plotly Animation과 Streamlit UI 동시 업데이트를 위해 'animation_loop' 모드 추가
+# 차트 표시 모드 초기화 ('animation_loop' 또는 'static')
 if 'display_mode' not in st.session_state:
     st.session_state.display_mode = 'animation_loop' # 기본 모드를 실시간 업데이트 루프 모드로 변경
+
+# 애니메이션 재생 상태 ('ready', 'playing')
+if 'animation_state' not in st.session_state:
+    st.session_state.animation_state = 'ready'
 
 # 한국 주식 코드 판별 헬퍼 (6자리 숫자로 판단)
 def is_korean_stock(code):
@@ -29,7 +32,7 @@ def get_usd_krw_rate(start_date, end_date):
         st.warning("⚠️ 원/달러 환율 데이터를 불러오는데 실패했습니다. 미국 주식 계산에 환율이 적용되지 않습니다. (1 USD = 1,300 KRW 가정)")
         return pd.Series(1300.0, index=pd.to_datetime([])) # 기본값 1,300 KRW/USD 가정
 
-# ********************** 수정/추가된 부분: 실시간 요약 테이블 업데이트 함수 **********************
+# ********************** 실시간 요약 테이블 업데이트 함수 **********************
 def update_summary_table(data_up_to_date, principal_series_full, current_index, monthly_amount_krw, placeholder):
     """
     특정 시점까지의 데이터를 바탕으로 투자 요약 테이블을 계산하고 
@@ -94,7 +97,7 @@ def update_summary_table(data_up_to_date, principal_series_full, current_index, 
                 summary_df, 
                 hide_index=True,
                 use_container_width=True,
-                # HTML 마크다운이 적용되도록 설정
+                # ********************** 수정: column_config를 st.dataframe 내부에 정의 **********************
                 column_config={
                     '수익 / 손실 (원)': st.column_config.MarkdownColumn('수익 / 손실 (원)'),
                     '수익률 (%)': st.column_config.MarkdownColumn('수익률 (%)'),
@@ -103,9 +106,10 @@ def update_summary_table(data_up_to_date, principal_series_full, current_index, 
 
 
 # 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수 (정적/최종 결과용)
+# ********************** 수정: st.column_config 호출 위치 수정 (AttributeError 해결) **********************
 def display_final_summary_table_static(data, principal_series):
     """최종 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 표시합니다."""
-    # update_summary_table과 동일한 로직을 사용하되, 플레이스홀더 없이 직접 표시
+    
     data_cut = data
     principal_series_cut = principal_series.dropna()
     
@@ -155,12 +159,12 @@ def display_final_summary_table_static(data, principal_series):
             summary_df, 
             hide_index=True,
             use_container_width=True,
+            # ********************** 수정: column_config를 st.dataframe 내부에 정의 **********************
             column_config={
                 '수익 / 손실 (원)': st.column_config.MarkdownColumn('수익 / 손실 (원)'),
                 '수익률 (%)': st.column_config.MarkdownColumn('수익률 (%)'),
             }
         )
-
 # ********************** simulate_monthly_investment 함수 (변경 없음) **********************
 @st.cache_data(show_spinner="⏳ 데이터 로딩 및 시뮬레이션 계산 중...")
 def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate_series):
@@ -275,6 +279,7 @@ if codes:
 
     # 3.2. 제목 및 버튼 (좌우 배치)
     col_title, col_button = st.columns([1, 0.4])
+    col_play_button = st.empty() # 재생 버튼을 위한 플레이스홀더
 
     with col_title:
         st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
@@ -288,14 +293,14 @@ if codes:
             key='toggle_result',
             help="차트 표시 모드를 전환합니다."
         ):
+            # 모드 토글 및 재생 상태 초기화
             st.session_state.display_mode = 'static' if st.session_state.display_mode == 'animation_loop' else 'animation_loop'
+            st.session_state.animation_state = 'ready'
             st.rerun() # 상태가 변경되었으므로 재실행하여 차트를 다시 그립니다.
 
-    # ********************** 수정/추가된 부분: 플레이스홀더 설정 **********************
-    # 차트와 요약표를 위한 플레이스홀더를 준비
+    # 플레이스홀더 설정
     chart_placeholder = st.empty()
     summary_placeholder = st.empty()
-
 
     # 3.3. Plotly go.Figure 기반 애니메이션
     
@@ -305,101 +310,103 @@ if codes:
     monthly_index_numbers = data.groupby('YearMonth').apply(lambda x: data.index.get_loc(x.index[0])).tolist()
     data = data.drop(columns=['YearMonth'])
     
-    # === 마지막 유효 날짜를 프레임에 강제로 추가하여 재생이 끝까지 진행되도록 보장 ===
     last_index = len(data) - 1
     if last_index not in monthly_index_numbers:
         monthly_index_numbers.append(last_index)
-    # =============================================================================================
     
     
     # 2. 실시간 업데이트 루프 (animation_loop 모드일 때만 실행)
     if st.session_state.display_mode == 'animation_loop':
         
-        # 애니메이션이 시작되었다는 것을 사용자에게 알리는 캡션
-        st.caption("📈 실시간 애니메이션 중... (아래 표를 확인하세요)")
-        
-        # Plotly Figure 초기 생성 (첫 번째 데이터만 포함)
-        initial_data = []
-        for col in data.columns:
-            line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
-            initial_data.append(
-                go.Scatter(
-                    x=data.index[:1], 
-                    y=data[col][:1], 
-                    mode='lines', 
-                    name=col,
-                    line=line_style if line_style else None
-                )
-            )
-
+        # Plotly Figure 초기 생성 (빈 데이터)
+        # ********************** 수정: 초기 차트 데이터를 빈 리스트로 설정하여 차트 비우기 **********************
+        initial_data = [] 
         initial_max_val = monthly_amount_krw * 2 
         
         fig = go.Figure(
             data=initial_data,
             layout=go.Layout(
-                title="누적 자산 가치 변화 (실시간 업데이트 중)",
+                title="누적 자산 가치 변화",
                 xaxis=dict(title="날짜"),
                 yaxis=dict(title="가치 (원)", range=[0, initial_max_val], tickformat=',.0f'), 
                 height=550,
             )
         )
-
         
-        # ********************** 실시간 업데이트 루프 시작 **********************
-        
-        # 루프를 통해 차트와 테이블을 동시에 업데이트
-        for i in monthly_index_numbers:
+        # 재생 버튼 표시 (재생 상태가 ready일 때만)
+        if st.session_state.animation_state == 'ready':
+            with col_play_button.container():
+                if st.button("▶️ **애니메이션 재생 시작**", key='start_anim', use_container_width=True):
+                    st.session_state.animation_state = 'playing'
+                    # 버튼을 누르면 상태 변경 후 rerun. 이후 'playing' 상태로 진입하여 루프 실행
+                    st.rerun()
             
-            # 1. 차트 데이터 업데이트 (새로운 프레임)
-            frame_data = []
-            max_val_up_to_i = 0
-            
-            # 현재 시점까지의 데이터만 사용
-            current_data_for_anim = data.iloc[:i+1]
-            
-            for col in data.columns:
-                line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
-                
-                trace = go.Scatter(
-                    x=current_data_for_anim.index, 
-                    y=current_data_for_anim[col], 
-                    mode='lines', 
-                    name=col,
-                    line=line_style if line_style else None
-                )
-                frame_data.append(trace)
-            
-            # 동적 Y축 범위 계산
-            current_max = current_data_for_anim.drop(columns=['총 적립 원금'], errors='ignore').max().max()
-            max_val_up_to_i = current_max * 1.1 if current_max > 0 else monthly_amount_krw * 2
-            
-            # Figure 업데이트
-            fig.data = frame_data
-            fig.update_layout(
-                title=f"누적 자산 가치 변화 (시점: {current_data_for_anim.index[-1].strftime('%Y년 %m월 %d일')})",
-                yaxis=dict(range=[0, max_val_up_to_i], title="가치 (원)", tickformat=',.0f')
-            )
-            
-            # 2. 차트 플레이스홀더에 표시
+            # 차트 비어있는 상태로 초기 표시
             with chart_placeholder:
                 st.plotly_chart(fig, use_container_width=True)
-                
-            # 3. 요약 테이블 업데이트 (실시간)
-            update_summary_table(
-                data, # 전체 데이터 사용
-                cumulative_principal, 
-                i, # 현재 인덱스
-                monthly_amount_krw, 
-                summary_placeholder # 테이블 플레이스홀더
-            )
-
-            # 4. 애니메이션 속도 조절
-            time.sleep(0.15) # 150ms 지연 (월별 업데이트 속도)
-
-        # 최종 결과 표시 후 캡션 초기화
-        st.caption("✅ 실시간 애니메이션이 완료되었습니다.")
             
-        
+            st.caption("차트가 비어있는 상태입니다. 상단의 '▶️ 애니메이션 재생 시작' 버튼을 눌러주세요.")
+            
+        elif st.session_state.animation_state == 'playing':
+            
+            # 애니메이션 루프 시작 전 캡션 표시
+            st.caption("📈 **실시간 애니메이션 진행 중...** (아래 표를 확인하세요)")
+            
+            # ********************** 실시간 업데이트 루프 시작 **********************
+            
+            for i in monthly_index_numbers:
+                
+                # 1. 차트 데이터 업데이트 (새로운 프레임)
+                frame_data = []
+                
+                # 현재 시점까지의 데이터만 사용
+                current_data_for_anim = data.iloc[:i+1]
+                
+                for col in data.columns:
+                    line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
+                    
+                    trace = go.Scatter(
+                        x=current_data_for_anim.index, 
+                        y=current_data_for_anim[col], 
+                        mode='lines', 
+                        name=col,
+                        line=line_style if line_style else None
+                    )
+                    frame_data.append(trace)
+                
+                # 동적 Y축 범위 계산
+                current_max = current_data_for_anim.drop(columns=['총 적립 원금'], errors='ignore').max().max()
+                max_val_up_to_i = current_max * 1.1 if current_max > 0 else monthly_amount_krw * 2
+                
+                # Figure 업데이트
+                fig.data = frame_data
+                fig.update_layout(
+                    title=f"누적 자산 가치 변화 (시점: {current_data_for_anim.index[-1].strftime('%Y년 %m월 %d일')})",
+                    yaxis=dict(range=[0, max_val_up_to_i], title="가치 (원)", tickformat=',.0f')
+                )
+                
+                # 2. 차트 플레이스홀더에 표시
+                with chart_placeholder:
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                # 3. 요약 테이블 업데이트 (실시간)
+                update_summary_table(
+                    data, 
+                    cumulative_principal, 
+                    i, 
+                    monthly_amount_krw, 
+                    summary_placeholder 
+                )
+
+                # 4. 애니메이션 속도 조절
+                time.sleep(0.15) 
+
+            # 루프 완료 후 최종 상태로 변경
+            st.session_state.animation_state = 'ready'
+            st.caption("✅ 실시간 애니메이션이 완료되었습니다. **재생 시작** 버튼을 다시 눌러 재시작할 수 있습니다.")
+            st.rerun() # 최종 결과를 반영하기 위해 rerun
+
+
     # 3.4. 정적/최종 결과 모드 (static)
     else:
         
