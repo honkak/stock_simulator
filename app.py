@@ -12,7 +12,6 @@ import time
 # 차트 표시 모드 초기화 ('animation' 또는 'static')
 if 'display_mode' not in st.session_state:
     st.session_state.display_mode = 'animation'
-# 🎯 [제거] st.session_state.show_final_summary 상태 관리를 제거합니다.
 
 # 한국 주식 코드 판별 헬퍼 (6자리 숫자로 판단)
 def is_korean_stock(code):
@@ -74,7 +73,7 @@ def display_final_summary_table(data, principal_series):
         })
 
     if investment_summary:
-        st.markdown("---") # 시각적 분리를 위해 추가
+        st.markdown("---") 
         summary_df = pd.DataFrame(investment_summary)
         st.markdown("#### 최종 시뮬레이션 요약")
         st.dataframe(
@@ -219,26 +218,11 @@ if codes:
     data['총 적립 원금'] = cumulative_principal
 
     # ==============================================================================
-    # 3.2. 제목 및 버튼 (좌우 배치)
+    # 3.2. 제목 및 버튼 (수정됨)
     # ==============================================================================
-    col_title, col_button = st.columns([1, 0.4])
-
-    with col_title:
-        st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
-
-    with col_button:
-        # '최종 결과 바로 표시' 버튼 로직 (상태 토글)
-        button_label = '최종 결과 바로 표시' if st.session_state.display_mode == 'animation' else '애니메이션 모드로 돌아가기'
-        if st.button(
-            button_label,
-            use_container_width=True, 
-            key='toggle_result',
-            help="차트 표시 모드를 전환합니다."
-        ):
-            # 모드 전환만 수행
-            st.session_state.display_mode = 'static' if st.session_state.display_mode == 'animation' else 'animation'
-            st.rerun() 
-
+    # 🎯 [수정] col_title만 남기고 col_button 제거
+    st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
+    
     # ==============================================================================
     # 3.3. Plotly go.Figure 기반 애니메이션 (변경 없음)
     # ==============================================================================
@@ -293,8 +277,8 @@ if codes:
     # 3. 초기/정적 데이터 트레이스 생성
     initial_data = []
     
-    # 정적 모드일 경우 모든 데이터를 포함, 애니메이션 모드일 경우 첫 행만 포함
-    data_to_render = data if st.session_state.display_mode == 'static' else data.iloc[[0]]
+    # 🎯 [수정] 버튼이 없으므로, 무조건 최종 데이터로 정적 차트를 그리거나, 첫 행으로 애니메이션을 시작합니다.
+    data_to_render = data if st.session_state.display_mode == 'static' else data.iloc[[0]] 
 
     for col in data.columns:
         line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
@@ -352,10 +336,10 @@ if codes:
     if st.session_state.display_mode == 'animation':
         st.caption("차트 우측 상단의 '▶️ 재생 시작' 버튼으로 애니메이션을 시청하세요.")
     else:
-        st.caption("현재 '최종 결과 바로 표시' 모드입니다. 왼쪽 버튼을 눌러 애니메이션 모드로 전환하세요.")
+        st.caption("현재는 '최종 결과 바로 표시' 모드입니다.")
 
     # ----------------------------------------------------------
     # 6. 최종 요약 테이블 표시
     # ----------------------------------------------------------
-    # 🎯 [수정] show_final_summary 상태 없이, 데이터가 로딩되면 항상 최종 요약표를 표시
+    # 🎯 [수정] 항상 최종 요약표를 표시
     display_final_summary_table(data, cumulative_principal)
