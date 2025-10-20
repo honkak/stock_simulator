@@ -3,19 +3,16 @@ import FinanceDataReader as fdr
 import datetime
 import pandas as pd
 import plotly.graph_objects as go # Plotly graph_objects 사용
-import time
+import time 
 
 # ==============================================================================
 # 0. Session State 및 UI Helper Functions
+# (생략: 변경 없음)
 # ==============================================================================
 
 # 차트 표시 모드 초기화 ('animation' 또는 'static')
 if 'display_mode' not in st.session_state:
     st.session_state.display_mode = 'animation'
-
-# 애니메이션 재생 상태 초기화 (NEW: 재생 시작 버튼을 숨기기 위함)
-if 'animation_clicked' not in st.session_state:
-    st.session_state.animation_clicked = False
 
 # 한국 주식 코드 판별 헬퍼 (6자리 숫자로 판단)
 def is_korean_stock(code):
@@ -222,24 +219,13 @@ if codes:
     data['총 적립 원금'] = cumulative_principal
 
     # ==============================================================================
-    # 3.2. 제목 및 버튼 (수정됨: Streamlit 버튼으로 재생 버튼 제어)
+    # 3.2. 제목 및 버튼 (수정됨)
     # ==============================================================================
-    # 제목 컬럼과 버튼 컬럼을 나누어 버튼을 차트 위에 배치
-    col_title, col_button = st.columns([1, 0.2])
+    # 🎯 [수정] col_title만 남기고 col_button 제거
+    st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
     
-    with col_title:
-        st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
-    
-    # Streamlit 버튼을 사용하여 "재생 시작" 버튼을 표시하고, 클릭 시 숨깁니다.
-    if st.session_state.display_mode == 'animation' and not st.session_state.animation_clicked:
-        with col_button:
-            # 버튼을 누르면 상태를 변경하고 앱을 재실행하여 버튼을 숨깁니다.
-            if st.button("▶️ 재생 시작", key='start_animation'):
-                st.session_state.animation_clicked = True
-                st.rerun() # 버튼 숨김 및 애니메이션 시작을 위해 재실행
-
     # ==============================================================================
-    # 3.3. Plotly go.Figure 기반 애니메이션
+    # 3.3. Plotly go.Figure 기반 애니메이션 (변경 없음)
     # ==============================================================================
     
     # 1. 월별 첫 거래일 인덱스 추출 (프레임 최적화)
@@ -288,12 +274,12 @@ if codes:
                                        # 동적 Y축 스케일링 적용
                                        yaxis=dict(range=[0, max_val_up_to_k]) 
                                    )))
-    
+            
     # 3. 초기/정적 데이터 트레이스 생성
     initial_data = []
     
-    # 🎯 [수정] Streamlit 버튼이 눌리지 않았다면 첫 행만, 눌렸다면 전체 데이터를 표시 (애니메이션이 시작된 것처럼)
-    data_to_render = data if st.session_state.display_mode == 'static' or st.session_state.animation_clicked else data.iloc[[0]] 
+    # 🎯 [수정] 버튼이 없으므로, 무조건 최종 데이터로 정적 차트를 그리거나, 첫 행으로 애니메이션을 시작합니다.
+    data_to_render = data if st.session_state.display_mode == 'static' else data.iloc[[0]] 
 
     for col in data.columns:
         line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
@@ -308,7 +294,7 @@ if codes:
             )
         )
 
-    # 4. Figure 생성 및 버튼 위치 조정
+    # 4. Figure 생성 및 버튼 위치 조정 (변경 없음)
     initial_max_val = data.iloc[:3].drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1 
     if initial_max_val == 0:
         initial_max_val = monthly_amount_krw * 2 # 최소값 보장
@@ -325,22 +311,27 @@ if codes:
         frames=frames
     )
     
-    # 🎯 [수정] Streamlit 버튼이 눌리지 않았을 때만 Plotly updatemenus를 사용하여 재생 버튼을 차트 내부에 표시합니다.
-    # (눌린 후에는 버튼이 사라집니다. 정지 버튼은 제거되었습니다.)
-    if st.session_state.display_mode == 'animation' and not st.session_state.animation_clicked:
+    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (변경 없음)
+    if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                              x=1.21, 
-                              y=0.7, 
-                              showactive=False,
-                              buttons=[
-                                  # '▶️ 재생 시작' 버튼만 남깁니다.
-                                  dict(label="▶️ 재생 시작", 
-                                        method="animate", 
-                                        args=[None, {"frame": {"duration": 150, "redraw": True}, # 속도 150ms/월
-                                                     "fromcurrent": True, 
-                                                     "transition": {"duration": 20, "easing": "linear"}}]), 
-                              ])]
+                             x=1.21, 
+                             y=0.7, 
+                             showactive=False,
+                             # ⭐⭐ 수정된 부분: xanchor와 yanchor 추가 ⭐⭐
+                             xanchor='left', # x=1.21을 기준으로 버튼을 왼쪽에 고정
+                             yanchor='middle', # y=0.7을 기준으로 버튼을 중앙에 고정
+                             # ================================================
+                             buttons=[
+                                 dict(label="▶️ 재생 시작", 
+                                      method="animate", 
+                                      args=[None, {"frame": {"duration": 150, "redraw": True}, # 속도 150ms/월
+                                                    "fromcurrent": True, 
+                                                    "transition": {"duration": 20, "easing": "linear"}}]), 
+                                 dict(label="⏸️ 정지", 
+                                      method="animate", 
+                                      args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])
+                             ])]
         )
 
     # 5. 차트 표시
@@ -348,10 +339,7 @@ if codes:
     
     # 🎯 [수정] 안내 메시지 단순화
     if st.session_state.display_mode == 'animation':
-        if not st.session_state.animation_clicked:
-            st.caption("차트 위 **'▶️ 재생 시작'** 버튼을 누르면 차트 내부의 애니메이션이 시작됩니다.")
-        else:
-            st.caption("애니메이션이 시작되었습니다. 재생 버튼은 사라집니다.")
+        st.caption("차트 우측 상단의 '▶️ 재생 시작' 버튼으로 애니메이션을 시청하세요.")
     else:
         st.caption("현재는 '최종 결과 바로 표시' 모드입니다.")
 
