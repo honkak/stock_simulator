@@ -33,7 +33,6 @@ def get_yf_ticker(code):
     index_map = {
         'DJI': '^DJI', 'IXIC': '^IXIC', 'GSPC': '^GSPC', 'VIX': '^VIX',
         # KRX 지수는 FinanceDataReader에서 지원하지만, 종목명 조회를 위해 yfinance가 인식 가능한 코드로 변환하지 않습니다. 
-        # (KRX 지수 코드는 fdr로만 가격을 가져옴)
     }
     return index_map.get(code, code) # 매핑된 지수 코드를 반환하거나, 그대로 (미국 주식/ETF) 반환
 
@@ -44,7 +43,6 @@ def get_stock_names_via_yf(codes_list):
     stock_name_map = {}
     
     # Fdr로 가져올 수 있는 KRX 종목 목록 (종목명 매핑을 돕기 위해 사용, yfinance의 shortName이 부정확할 때 대비)
-    # yfinance가 해외 종목명을 더 잘 가져오므로, KRX 종목명만 fdr의 StockListing으로 보강합니다.
     krx_name_map = {}
     try:
         df_krx = fdr.StockListing('KRX')
@@ -322,6 +320,14 @@ if codes:
 
     # 데이터 병합 후, NaN 값을 직전 유효 값으로 채우고 모든 열이 NaN인 행만 제거하여 안정성 확보
     data = pd.concat(dfs, axis=1).ffill().dropna(how='all')
+    
+    # ⭐ 새로운 제목 포맷 설정
+    start_date_str = start_date.strftime('%Y년 %m월 %d일')
+    end_date_str = end_date.strftime('%Y년 %m월 %d일')
+    full_title = f"누적 자산 가치 변화 ({start_date_str} ~ {end_date_str})"
+    
+    # 마지막 날짜 포맷
+    last_date = data.index[-1].strftime('%Y년 %m월 %d일')
 
     # ==============================================================================
     # 3.1. 총 적립 원금 계산 (변경 없음)
@@ -361,11 +367,17 @@ if codes:
     frames = []
     # 애니메이션 모드일 경우에만 프레임을 생성
     if st.session_state.display_mode == 'animation':
-        for date in monthly_indices:
+        for i, date in enumerate(monthly_indices):
             if date not in data.index:
                 continue
 
             k = data.index.get_loc(date)
+            
+            # ⭐ 마지막 프레임의 제목은 최종 날짜를 명시
+            frame_title = full_title
+            if i == len(monthly_indices) - 1:
+                 frame_title = f"누적 자산 가치 변화 (최종 시점: {last_date})"
+
 
             frame_data = []
             for col in data.columns:
@@ -388,7 +400,8 @@ if codes:
 
             frames.append(go.Frame(data=frame_data, name=date.strftime('%Y-%m-%d'),
                                    layout=go.Layout(
-                                       title=f"누적 자산 가치 변화 (시점: {date.strftime('%Y년 %m월 %d일')})",
+                                       # ⭐ 프레임 타이틀 동적 변경
+                                       title=frame_title, 
                                        # 동적 Y축 스케일링 적용
                                        yaxis=dict(range=[0, max_val_up_to_k])
                                    )))
@@ -420,7 +433,8 @@ if codes:
     fig = go.Figure(
         data=initial_data,
         layout=go.Layout(
-            title="누적 자산 가치 변화",
+            # ⭐ 초기 차트 제목 설정
+            title=full_title,
             xaxis=dict(title="날짜"),
             # 초기 Y축 범위 설정 (작은 값에 맞춰 시작)
             yaxis=dict(title="가치 (원)", range=[0, initial_max_val], tickformat=',.0f'),
@@ -434,7 +448,7 @@ if codes:
         fig.update_layout(
             updatemenus=[dict(type="buttons",
                               x=1.03,  # ⭐ 왼쪽으로 이동 (1.21 -> 1.05)
-                              y=0.25,  # ⭐ 아래로 이동 (0.7 -> 0.25)
+                              y=0.5,  # ⭐ 아래로 이동 (0.7 -> 0.25)
                               showactive=False,
                               xanchor='left', # x=1.05를 기준으로 버튼을 왼쪽에 고정
                               yanchor='middle', # y=0.25를 기준으로 버튼을 중앙에 고정
