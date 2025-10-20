@@ -225,7 +225,7 @@ if codes:
     st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
     
     # ==============================================================================
-    # 3.3. Plotly go.Figure 기반 애니메이션 (변경 없음)
+    # 3.3. Plotly go.Figure 기반 애니메이션 (위치 조정)
     # ==============================================================================
     
     # 1. 월별 첫 거래일 인덱스 추출 (프레임 최적화)
@@ -311,15 +311,15 @@ if codes:
         frames=frames
     )
     
-    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (흔들림 방지 수정 반영)
+    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (위치 수정: x=1.05, y=0.25)
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                             x=1.21, 
-                             y=0.7, 
+                             x=1.05,  # ⭐ 왼쪽으로 이동 (1.21 -> 1.05)
+                             y=0.25,  # ⭐ 아래로 이동 (0.7 -> 0.25)
                              showactive=False,
-                             xanchor='left', # x=1.21을 기준으로 버튼을 왼쪽에 고정
-                             yanchor='middle', # y=0.7을 기준으로 버튼을 중앙에 고정
+                             xanchor='left', # x=1.05를 기준으로 버튼을 왼쪽에 고정
+                             yanchor='middle', # y=0.25를 기준으로 버튼을 중앙에 고정
                              buttons=[
                                  dict(label="▶️ 재생 시작", 
                                       method="animate", 
@@ -333,21 +333,17 @@ if codes:
         )
 
     # 5. Plotly Config 설정: 기본 모드바의 애니메이션 버튼을 제거
-    # ⭐⭐ 추가된 부분 ⭐⭐
     config = {
-        # 기본 모드바(차트 우상단)에서 애니메이션 관련 버튼을 제거합니다.
-        # 이렇게 해야 우리가 추가한 updatemenus 버튼만 남게 됩니다.
         'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d', 'toggleSpikelines', 'hoverCompareCartesian', 'hoverClosestCartesian', 'toImage', 'sendDataToCloud', 'editInChartStudio', 'tableRotation', 'v1hovermode', 'toggleHover', 'resetViewMapbox', 'resetViews', 'resetGeo', 'hoverClosestGeo', 'hoverClosestGl2d', 'hoverClosestPie', 'resetSankeyGroup', 'toggleHover', 'resetGeo', 'hoverClosest3d', 'orbitRotation', 'tableRotation', 'resetCameraDefault3d', 'resetCameraLastSave3d', 'tableRotation', 'zoom3d', 'pan3d', 'orbitRotation', 'tableRotation', 'resetCameraDefault3d', 'resetCameraLastSave3d', 'hoverClosest3d', 'tableRotation', 'zoomInGeo', 'zoomOutGeo', 'resetGeo', 'hoverClosestGeo', 'zoomInMapbox', 'zoomOutMapbox', 'resetMapbox', 'hoverClosestMapbox', 'resetViewMapbox', 'playButton', 'pauseButton']
     }
     # 5. 차트 표시 (config 추가)
     st.plotly_chart(fig, config=config, use_container_width=True)
-    # ==================
     
-    # 🎯 [수정] 안내 메시지 단순화
-    if st.session_state.display_mode == 'animation':
-        st.caption("차트 우측 상단의 '▶️ 재생 시작' 버튼으로 애니메이션을 시청하세요.")
-    else:
-        st.caption("현재는 '최종 결과 바로 표시' 모드입니다.")
+    # 🎯 [제거] 안내 메시지 제거
+    # if st.session_state.display_mode == 'animation':
+    #     st.caption("차트 우측 상단의 '▶️ 재생 시작' 버튼으로 애니메이션을 시청하세요.")
+    # else:
+    #     st.caption("현재는 '최종 결과 바로 표시' 모드입니다.")
 
     # ----------------------------------------------------------
     # 6. 최종 요약 테이블 표시
