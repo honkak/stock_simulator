@@ -166,6 +166,65 @@ def create_plotly_chart(data, title="적립식 투자 시뮬레이션 결과"):
 # 4. 시뮬레이션 실행 및 결과 표시 (애니메이션 포함)
 # ==============================================================================
 
+# 시뮬레이션 요약 테이블을 업데이트하는 헬퍼 함수
+def update_summary_table(current_data, cumulative_principal, current_index, monthly_amount_krw, placeholder):
+    """현재 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 지정된 Placeholder에 표시합니다."""
+    
+    # current_principal은 현재 인덱스까지의 원금 데이터
+    if current_index >= 0:
+        total_invested_principal_at_current_date = cumulative_principal.iloc[current_index]
+    else:
+        total_invested_principal_at_current_date = 0
+
+    investment_summary = []
+    
+    # --- 수정된 부분: 총 적립 원금 행을 첫 번째로 추가 ---
+    principal_value = total_invested_principal_at_current_date
+    if principal_value > 0:
+        investment_summary.append({
+            '종목': '총 적립 원금',
+            '총 투자 원금 (원)': f"{principal_value:,.0f}",
+            '현재 자산 가치 (원)': f"{principal_value:,.0f}",
+            '수익 / 손실 (원)': f"{0:,.0f}", # 원금=가치이므로 수익/손실은 0
+            '수익률 (%)': f"{0.00:,.2f}%"  # 수익률은 0%
+        })
+    # --- 수정된 부분 끝 ---
+
+
+    for code in current_data.columns:
+        # '총 적립 원금' 열은 요약 계산에서 제외 (이미 위에서 처리함)
+        if code == '총 적립 원금':
+            continue
+
+        series = current_data[code].dropna()
+        if series.empty:
+            continue
+        
+        # 마지막 유효 값을 최종 자산 가치로 사용
+        final_value = series.iloc[-1]
+        
+        profit_loss = final_value - total_invested_principal_at_current_date
+        # 원금이 0보다 클 때만 수익률 계산
+        return_rate = (profit_loss / total_invested_principal_at_current_date) * 100 if total_invested_principal_at_current_date > 0 else 0
+
+        investment_summary.append({
+            '종목': code,
+            '총 투자 원금 (원)': f"{total_invested_principal_at_current_date:,.0f}",
+            '현재 자산 가치 (원)': f"{final_value:,.0f}",
+            '수익 / 손실 (원)': f"{profit_loss:,.0f}",
+            '수익률 (%)': f"{return_rate:,.2f}%"
+        })
+
+    if investment_summary:
+        summary_df = pd.DataFrame(investment_summary)
+        with placeholder.container(): # Use placeholder to update the table
+            st.markdown("#### 누적 투자 요약")
+            st.dataframe(
+                summary_df, 
+                hide_index=True,
+                use_container_width=True,
+            )
+
 if codes:
     st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
     
@@ -197,7 +256,7 @@ if codes:
         if st.session_state.current_index > max_index:
             st.session_state.current_index = max_index
         
-        # --- NEW: 총 적립 원금 라인 계산 ---
+        # --- 총 적립 원금 라인 계산 ---
         cumulative_principal = pd.Series(0.0, index=combined_data_full.index)
         total_invested_principal = 0.0
         last_invested_month = -1
@@ -214,8 +273,6 @@ if codes:
         
         # 데이터프레임에 '총 적립 원금' 라인 추가
         combined_data_full['총 적립 원금'] = cumulative_principal
-        # --- END NEW LOGIC ---
-
         
         # --- 컨트롤 패널 ---
         st.markdown("<h4 style='font-size: 16px; margin-top: 15px;'>▶️ 시뮬레이션 재생 컨트롤</h4>", unsafe_allow_html=True)
@@ -248,32 +305,42 @@ if codes:
         # 4.2.3. 차트 및 요약 테이블을 업데이트할 Placeholder 설정
         chart_viz_placeholder = st.empty()        # 차트 시각화
         chart_date_caption_placeholder = st.empty() # 애니메이션 날짜 캡션
-        summary_placeholder = st.empty()
+        summary_placeholder = st.empty()            # 요약 테이블 시각화
         
         # 4.2.4. 재생 시작 버튼 (애니메이션 루프)
         with col_play:
             if st.button('재생 시작 (애니메이션)', use_container_width=True, key='start_play'):
                 # 루프가 돌아가는 동안 UI를 막고 애니메이션을 표시
-                for i in range(st.session_state.current_index, max_index + 1, 10): # 10일 간격으로 빠르게 진행
+                for i in range(st.session_state.current_index, max_index + 1, 5): # 5일 간격으로 빠르게 진행 (더 부드럽게)
                     
                     # 현재 데이터 슬라이싱
                     current_data_for_anim = combined_data_full.iloc[:i + 1]
                     
+                    # 1. 차트 업데이트
                     with chart_viz_placeholder.container():
-                        # Plotly 차트 생성 및 업데이트
                         fig = create_plotly_chart(current_data_for_anim)
                         st.plotly_chart(fig, use_container_width=True)
                         
+                    # 2. 날짜 캡션 업데이트
                     with chart_date_caption_placeholder:
-                        # 현재 시점을 표시
                         current_date_in_anim = dates_list[i].strftime('%Y년 %m월 %d일')
                         st.caption(f"현재 시점: **{current_date_in_anim}**")
-                        
+                    
+                    # 3. 요약 테이블 업데이트 (실시간)
+                    if i > 0: # 데이터가 있을 때만 표시
+                        update_summary_table(
+                            current_data_for_anim, 
+                            cumulative_principal, 
+                            i, 
+                            monthly_amount_krw, 
+                            summary_placeholder
+                        )
+                    
                     time.sleep(0.05) # 부드러운 재생을 위해 지연 시간 0.05초 유지
                 
                 # 애니메이션 완료 후 최종 상태로 업데이트하고 UI 갱신
                 st.session_state.current_index = max_index
-                st.rerun()
+                st.rerun() # Ensure the slider updates to max_index and static view is correct
                 
         # --- 차트 및 요약 결과 표시 ---
         
@@ -288,46 +355,18 @@ if codes:
         with chart_date_caption_placeholder:
             st.caption(f"차트 시점: **{current_date_display}**") # 애니메이션 후 또는 슬라이더 조작 시 캡션
 
-        # 4.4. 최종 결과 요약 계산 및 표시
+        # 4.4. 최종 결과 요약 계산 및 표시 (슬라이더 조작 시 또는 초기 로딩 시)
         if st.session_state.current_index > 0:
-            
-            with summary_placeholder:
-                st.markdown("#### 누적 투자 요약")
-                
-                investment_summary = []
-
-                for code in current_data.columns:
-                    # '총 적립 원금' 열은 요약 계산에서 제외
-                    if code == '총 적립 원금':
-                        continue
-
-                    series = current_data[code].dropna()
-                    if series.empty:
-                        continue
-
-                    # 투자 원금 계산: 데이터가 존재하는 월 수
-                    # '총 적립 원금' 시리즈의 마지막 값을 사용
-                    total_invested_principal = cumulative_principal[series.index[-1]]
-                    
-                    final_value = series.iloc[-1] if not series.empty else 0
-                    profit_loss = final_value - total_invested_principal
-                    return_rate = (profit_loss / total_invested_principal) * 100 if total_invested_principal > 0 else 0
-
-                    investment_summary.append({
-                        '종목': code,
-                        '총 투자 원금 (원)': f"{total_invested_principal:,.0f}",
-                        '현재 자산 가치 (원)': f"{final_value:,.0f}",
-                        '수익 / 손실 (원)': f"{profit_loss:,.0f}",
-                        '수익률 (%)': f"{return_rate:,.2f}%"
-                    })
-
-                if investment_summary:
-                    summary_df = pd.DataFrame(investment_summary)
-                    st.dataframe(
-                        summary_df, 
-                        hide_index=True,
-                        use_container_width=True,
-                    )
+            update_summary_table(
+                current_data, 
+                cumulative_principal, 
+                st.session_state.current_index, 
+                monthly_amount_krw, 
+                summary_placeholder
+            )
+        else:
+            # 초기 로딩 시 또는 인덱스가 0일 때 테이블 비우기
+            summary_placeholder.empty()
         
     else:
         st.info("선택된 기간 및 코드로 시뮬레이션할 유효한 데이터가 없습니다.")
