@@ -18,6 +18,48 @@ if 'display_mode' not in st.session_state:
 def is_korean_stock(code):
     return code.isdigit() and len(code) == 6
 
+# 종목 코드 -> 종목명 매핑 딕셔너리 생성 함수 (캐싱 적용)
+@st.cache_data(show_spinner="📜 종목명 리스트 로딩 중...")
+def get_stock_names():
+    """FinanceDataReader를 사용하여 주요 시장의 종목 코드-이름 매핑을 가져옵니다."""
+    try:
+        # 한국 (KRX)
+        df_krx = fdr.StockListing('KRX')
+        krx_map = df_krx.set_index('Symbol')['Name'].to_dict()
+    except Exception:
+        # 데이터 로딩 실패 시 빈 딕셔너리로 대체
+        krx_map = {}
+        # st.warning("KRX 종목명 로딩에 실패했습니다.") 
+
+    try:
+        # 미국 (NASDAQ, NYSE)
+        # QQQ, AAPL 등은 나스닥/뉴욕에 상장된 종목이므로 두 리스트를 병합합니다.
+        df_nasdaq = fdr.StockListing('NASDAQ')
+        df_nyse = fdr.StockListing('NYSE')
+        
+        us_map_nasdaq = df_nasdaq.set_index('Symbol')['Name'].to_dict()
+        us_map_nyse = df_nyse.set_index('Symbol')['Name'].to_dict()
+        
+        # NASDAQ 데이터에 NYSE 데이터를 업데이트 (겹치는 경우 NASDAQ 우선)
+        us_map = us_map_nasdaq
+        us_map.update(us_map_nyse)
+        
+    except Exception:
+        us_map = {}
+        # st.warning("미국 종목명 로딩에 실패했습니다.") 
+
+    # KRX 맵과 US 맵을 결합 (겹치는 코드는 KRX가 우선)
+    stock_name_map = {}
+    stock_name_map.update(us_map) # 미국 주식 먼저 넣고
+    stock_name_map.update(krx_map) # 한국 주식으로 덮어씁니다.
+    
+    # 수동 종목명 추가 (검색 결과 참조)
+    stock_name_map['QQQ'] = 'Invesco QQQ Trust, Series 1'
+    stock_name_map['005930'] = '삼성전자'
+    stock_name_map['AAPL'] = 'Apple Inc.'
+
+    return stock_name_map
+
 # 환율 데이터 (USD/KRW)를 가져오는 헬퍼 함수
 @st.cache_data
 def get_usd_krw_rate(start_date, end_date):
@@ -31,7 +73,7 @@ def get_usd_krw_rate(start_date, end_date):
         return pd.Series(1300.0, index=pd.to_datetime([])) # 기본값 1,300 KRW/USD 가정
 
 # 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수
-def display_final_summary_table(data, principal_series, monthly_amount):
+def display_final_summary_table(data, principal_series, monthly_amount, stock_name_map): # ⭐ stock_name_map 인수 추가
     """최종 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 표시합니다."""
 
     valid_data_length = len(principal_series.dropna())
@@ -88,6 +130,10 @@ def display_final_summary_table(data, principal_series, monthly_amount):
         if code == '총 적립 원금':
             continue
 
+        # 종목 코드에 종목명 추가하여 포맷팅
+        name = stock_name_map.get(code, '알 수 없음')
+        display_name = f"{code} ({name})" # ⭐ 종목명($코드$) 포맷
+
         # 마지막 유효 값 (최종 자산 가치)
         final_value = data[code].dropna().iloc[-1]
 
@@ -95,7 +141,7 @@ def display_final_summary_table(data, principal_series, monthly_amount):
         return_rate = (profit_loss / total_invested_principal) * 100 if total_invested_principal > 0 else 0
 
         investment_summary.append({
-            '종목': code,
+            '종목': display_name, # ⭐ 포맷팅된 이름 사용
             '총 투자 원금 (원)': f"{total_invested_principal:,.0f}",
             '현재 자산 가치 (원)': f"{final_value:,.0f}",
             '수익 / 손실 (원)': f"{profit_loss:,.0f}",
@@ -166,11 +212,11 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate
                 final_rate = aligned_rate.loc[date]
                 cumulative[date] = shares * price * final_rate
 
-        # --- CRITICAL FIX: Series 이름을 종목 코드로 명시적으로 설정 ---
+            # --- CRITICAL FIX: Series 이름을 종목 코드로 명시적으로 설정 ---
         cumulative.name = code
-        # -------------------------------------------------------------
+            # -------------------------------------------------------------
 
-        # 첫 투자 시점 이후 데이터만 반환
+            # 첫 투자 시점 이후 데이터만 반환
         return cumulative[cumulative.cumsum() != 0]
 
     except Exception as e:
@@ -215,6 +261,9 @@ st.markdown("---")
 codes = [c.strip() for c in [code1, code2, code3] if c.strip()]
 
 if codes:
+    
+    # ⭐ 종목명 매핑 데이터 로드
+    stock_name_map = get_stock_names()
 
     # 환율 데이터 선취 및 캐싱
     usd_krw_rate_series = get_usd_krw_rate(start_date, end_date)
@@ -371,8 +420,8 @@ if codes:
     # ----------------------------------------------------------
     # 6. 최종 요약 테이블 표시
     # ----------------------------------------------------------
-    # monthly_amount_krw를 추가 인수로 전달
-    display_final_summary_table(data, cumulative_principal, monthly_amount_krw)
+    # monthly_amount_krw, stock_name_map를 추가 인수로 전달
+    display_final_summary_table(data, cumulative_principal, monthly_amount_krw, stock_name_map) # ⭐ stock_name_map 전달
 
 # ==============================================================================
 # 4. 종목 코드 참고 자료 섹션 (추가됨)
