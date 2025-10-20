@@ -261,7 +261,7 @@ st.markdown("---")
 monthly_amount_krw = st.number_input(
     '💵 매월 적립 금액 (원)',
     min_value=1000,
-    value=500000, # 50만원 기본값
+    value=1000000, # 100만원 기본값
     step=10000
 )
 
