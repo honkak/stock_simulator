@@ -5,6 +5,14 @@ import pandas as pd
 import plotly.express as px # Plotly 라이브러리 추가
 
 # ==============================================================================
+# 0. Session State 초기화 및 설정
+# ==============================================================================
+
+# 차트 표시 모드 (애니메이션 vs. 최종 결과)
+if 'display_mode' not in st.session_state:
+    st.session_state.display_mode = 'animation' # 'animation' 또는 'static'
+
+# ==============================================================================
 # 1. UI 및 입력 설정
 # ==============================================================================
 
@@ -61,10 +69,6 @@ st.markdown("---")
 codes = [code1.strip(), code2.strip(), code3.strip()]
 codes = [code for code in codes if code] # 빈 코드 제거
 
-# 이전 버전에서 사용되던 애니메이션 상태 변수는 제거합니다.
-# if 'current_index' not in st.session_state:
-#     st.session_state.current_index = 0
-
 # ==============================================================================
 # 2. 적립식 시뮬레이션 로직 (Full Range 데이터 계산)
 # ==============================================================================
@@ -117,53 +121,100 @@ def run_monthly_installment_simulation(code, start_date, end_date, monthly_amoun
 # 3. Plotly 차트 생성 함수
 # ==============================================================================
 
-def create_plotly_chart(data, title="적립식 투자 시뮬레이션 결과"):
+def create_plotly_chart(data, title="적립식 투자 시뮬레이션 결과", is_animation=True):
     """
-    Plotly Express를 사용하여 누적 자산 가치 차트를 생성하고 애니메이션 프레임을 설정합니다.
+    Plotly Express를 사용하여 누적 자산 가치 차트를 생성합니다.
+    is_animation=True일 경우 애니메이션 프레임을 설정하고 데이터 구조를 재가공합니다.
     """
-    # 1. 누적 데이터프레임 (Wide format) 준비
     data_wide = data.copy()
     data_wide.index.name = '날짜'
-    
-    # 2. Plotly animation_frame을 위한 누적 데이터 구조 재가공 (트릭)
-    # Plotly는 각 프레임에 대해 전체 데이터를 표시하므로, 
-    # 차트가 시간에 따라 그려지도록 누적된 데이터를 담는 새로운 구조가 필요합니다.
-    frames_data = []
-    
-    for i in range(len(data_wide)):
-        # 현재 프레임의 데이터 (i번째 날까지)
-        frame_df = data_wide.iloc[:i + 1].copy()
+
+    if is_animation:
+        # 2. Plotly animation_frame을 위한 누적 데이터 구조 재가공 (성능 개선 로직 적용)
+        frames_data = []
         
-        # Long Format으로 변환
-        frame_df_long = frame_df.reset_index().melt(
+        # 매월 첫 거래일에만 프레임 생성 (성능 최적화)
+        data_wide['YearMonth'] = data_wide.index.to_period('M')
+        monthly_indices = data_wide.groupby('YearMonth').apply(lambda x: x.index[0])
+        
+        for i in range(len(data_wide)):
+            current_date = data_wide.index[i]
+            
+            # 해당 날짜가 월별 첫 거래일에 해당하는 경우에만 프레임 생성
+            if current_date in monthly_indices:
+                # 현재 프레임의 데이터 (i번째 날까지)
+                frame_df = data_wide.iloc[:i + 1].copy().drop(columns=['YearMonth'])
+                
+                # Long Format으로 변환
+                frame_df_long = frame_df.reset_index().melt(
+                    id_vars='날짜', 
+                    var_name='종목코드', 
+                    value_name='누적 자산 가치 (원)'
+                )
+                
+                # 이 프레임이 나타내는 '날짜'를 애니메이션 프레임 키로 사용
+                frame_df_long['Animation Date'] = current_date.strftime('%Y-%m-%d')
+                frames_data.append(frame_df_long)
+
+        # 모든 프레임 데이터를 합칩니다.
+        df_anim = pd.concat(frames_data)
+        
+        # Plotly chart configuration
+        fig = px.line(
+            df_anim.dropna(subset=['누적 자산 가치 (원)']), 
+            x='날짜',
+            y='누적 자산 가치 (원)',
+            color='종목코드',
+            animation_frame='Animation Date', # 네이티브 애니메이션 적용
+            title=title,
+        )
+        
+        # Y축 범위 고정 (애니메이션 중 차트가 출렁이는 현상 방지)
+        y_max = df_anim['누적 자산 가치 (원)'].max() * 1.05 if not df_anim.empty else 1000000 
+        fig.update_yaxes(range=[0, y_max])
+        
+        # 애니메이션 컨트롤 설정
+        fig.update_layout(
+            updatemenus=[
+                dict(
+                    type='buttons',
+                    showactive=False,
+                    y=0,
+                    x=0.01,
+                    xanchor='left',
+                    yanchor='bottom',
+                    pad=dict(t=10, r=10),
+                    buttons=[
+                        dict(
+                            label='▶️ 재생 시작',
+                            method='animate',
+                            args=[None, {
+                                'frame': {'duration': 100, 'redraw': True}, # 프레임당 100ms (속도 조정)
+                                'fromcurrent': True,
+                                'transition': {'duration': 1, 'easing': 'linear'} # 부드러운 전환
+                            }]
+                        )
+                    ]
+                )
+            ]
+        )
+
+    else:
+        # Static Chart (최종 결과)
+        df_long = data_wide.reset_index().melt(
             id_vars='날짜', 
             var_name='종목코드', 
             value_name='누적 자산 가치 (원)'
         )
+        fig = px.line(
+            df_long.dropna(),
+            x='날짜',
+            y='누적 자산 가치 (원)',
+            color='종목코드',
+            title=title
+        )
         
-        # 이 프레임이 나타내는 '날짜'를 애니메이션 프레임 키로 사용
-        frame_df_long['Animation Date'] = data_wide.index[i].strftime('%Y-%m-%d')
-        frames_data.append(frame_df_long)
-
-    # 모든 프레임 데이터를 합칩니다.
-    df_anim = pd.concat(frames_data)
-    
-    # --- Plotly Chart Creation ---
-    
-    fig = px.line(
-        df_anim.dropna(subset=['누적 자산 가치 (원)']), 
-        x='날짜',
-        y='누적 자산 가치 (원)',
-        color='종목코드',
-        animation_frame='Animation Date', # 네이티브 애니메이션 적용
-        title=title,
-    )
-    
-    # Y축 범위 고정 (애니메이션 중 차트가 출렁이는 현상 방지)
-    y_max = df_anim['누적 자산 가치 (원)'].max() * 1.05 if not df_anim.empty else 1000000 
-    fig.update_yaxes(range=[0, y_max])
-    
-    # 레이아웃 개선
+    # 공통 레이아웃 설정
     fig.update_layout(
         xaxis_title="날짜",
         yaxis_title="누적 자산 가치 (원)",
@@ -171,46 +222,25 @@ def create_plotly_chart(data, title="적립식 투자 시뮬레이션 결과"):
         legend_title_text='종목',
         margin=dict(l=20, r=20, t=40, b=20),
         height=500,
-        # 애니메이션 속도 및 부드러운 전환 설정
-        updatemenus=[
-            dict(
-                type='buttons',
-                showactive=False,
-                y=0,
-                x=0.01,
-                xanchor='left',
-                yanchor='bottom',
-                pad=dict(t=10, r=10),
-                buttons=[
-                    dict(
-                        label='▶️ 재생 시작',
-                        method='animate',
-                        args=[None, {
-                            'frame': {'duration': 10, 'redraw': True}, # 프레임당 10ms (속도)
-                            'fromcurrent': True,
-                            'transition': {'duration': 1, 'easing': 'linear'} # 부드러운 전환
-                        }]
-                    )
-                ]
-            )
-        ]
-        # Plotly의 기본 슬라이더는 자동으로 표시되므로 별도로 설정하지 않습니다.
     )
     
     # Y축에 통화 형식 포맷 적용
     fig.update_yaxes(tickformat=',.0f')
 
-    # '총 적립 원금' 라인 스타일을 모든 프레임에 적용 (Plotly 애니메이션 필요)
-    for frame in fig.frames:
-        for trace in frame.data:
-            if trace.name == '총 적립 원금':
-                trace.update(
-                    line=dict(color='lightgray', width=2, dash='dash'),
-                    opacity=0.8,
-                    hovertemplate="날짜: %{x}<br>원금: %{y:,.0f} 원<extra></extra>"
-                )
+    # '총 적립 원금' 라인 스타일을 적용
     
-    # 초기 데이터에도 스타일 적용
+    # 애니메이션 모드일 경우 프레임 내의 원금 라인에 스타일 적용
+    if is_animation:
+        for frame in fig.frames:
+            for trace in frame.data:
+                if trace.name == '총 적립 원금':
+                    trace.update(
+                        line=dict(color='lightgray', width=2, dash='dash'),
+                        opacity=0.8,
+                        hovertemplate="날짜: %{x}<br>원금: %{y:,.0f} 원<extra></extra>"
+                    )
+    
+    # 초기 데이터 및 Static 모드에 스타일 적용
     for trace in fig.data:
         if trace.name == '총 적립 원금':
             trace.update(
@@ -321,29 +351,36 @@ if codes:
         # 데이터프레임에 '총 적립 원금' 라인 추가
         combined_data_full['총 적립 원금'] = cumulative_principal
         
-        # --- 컨트롤 패널 (Plotly 내장 재생 기능 사용) ---
-        st.markdown("<h4 style='font-size: 16px; margin-top: 15px;'>▶️ 애니메이션 재생 컨트롤 (차트 내부의 재생 버튼 사용)</h4>", unsafe_allow_html=True)
+        # --- 컨트롤 패널 ---
+        st.markdown("<h4 style='font-size: 16px; margin-top: 15px;'>▶️ 애니메이션 재생 컨트롤</h4>", unsafe_allow_html=True)
 
-        col_instant = st.columns(1)[0] # 버튼 하나만 남기고 구조 단순화
-
-        # '최종 결과 바로 표시' 버튼은 Plotly의 애니메이션을 건너뛰고 최종 정적 상태를 표시합니다.
-        with col_instant:
-            st.button(
-                '최종 결과 바로 표시 (시간 무시)', 
+        col_control = st.columns(1)[0]
+        
+        # '최종 결과 바로 표시' 버튼 로직 수정: 상태 토글
+        with col_control:
+            if st.button(
+                '최종 결과 바로 표시 (시간 무시)' if st.session_state.display_mode == 'animation' else '애니메이션 모드로 돌아가기',
                 use_container_width=True, 
-                key='instant_result',
-                help="애니메이션을 건너뛰고 최종 시점의 차트와 요약 정보를 즉시 표시합니다."
-            )
+                key='toggle_result',
+                help="차트 표시 모드를 전환합니다."
+            ):
+                st.session_state.display_mode = 'static' if st.session_state.display_mode == 'animation' else 'animation'
+                st.rerun() # 상태가 변경되었으므로 재실행하여 차트를 다시 그립니다.
         
         # --- Chart Display ---
-        
-        # Plotly Animation Chart (Full Data)
-        fig_anim = create_plotly_chart(combined_data_full)
-        st.plotly_chart(fig_anim, use_container_width=True)
+
+        if st.session_state.display_mode == 'animation':
+            # Plotly Animation Chart (느린 로딩/깜빡임 문제 해결)
+            fig = create_plotly_chart(combined_data_full, is_animation=True)
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption("차트 하단의 슬라이더와 재생 버튼을 사용하여 시간 진행 애니메이션을 확인하세요.")
+        else:
+            # Static Chart (최종 결과만 표시)
+            fig = create_plotly_chart(combined_data_full, is_animation=False)
+            st.plotly_chart(fig, use_container_width=True)
         
         # --- Final Summary Table ---
         
-        # Plotly 애니메이션 사용 시 실시간 업데이트는 불가능하므로, 최종 결과만 표시합니다.
         display_final_summary_table(
             combined_data_full, 
             cumulative_principal, 
