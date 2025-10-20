@@ -12,10 +12,26 @@ import plotly.graph_objects as go # Plotly graph_objects 사용
 if 'display_mode' not in st.session_state:
     st.session_state.display_mode = 'animation'
 
+# 한국 주식 코드 판별 헬퍼 (6자리 숫자로 판단)
+def is_korean_stock(code):
+    return code.isdigit() and len(code) == 6
+
+# 환율 데이터 (USD/KRW)를 가져오는 헬퍼 함수
+@st.cache_data
+def get_usd_krw_rate(start_date, end_date):
+    """원/달러 환율(USD/KRW) 종가를 가져옵니다."""
+    try:
+        # FDR에서 'USD/KRW' 코드를 사용하여 환율을 가져옴 (1 USD당 KRW)
+        rate_df = fdr.DataReader('USD/KRW', start_date, end_date)
+        return rate_df['Close'].rename('USD/KRW')
+    except Exception:
+        st.warning("⚠️ 원/달러 환율 데이터를 불러오는데 실패했습니다. 미국 주식 계산에 환율이 적용되지 않습니다. (1 USD = 1,300 KRW 가정)")
+        return pd.Series(1300.0, index=pd.to_datetime([])) # 기본값 1,300 KRW/USD 가정
+
 # 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수
 def display_final_summary_table(data, principal_series):
     """최종 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 표시합니다."""
-    # NaN 값 때문에 max_index가 잘못 계산되는 것을 방지하기 위해 유효 데이터로 길이 계산
+    
     valid_data_length = len(principal_series.dropna())
     if valid_data_length == 0:
         return
@@ -42,7 +58,6 @@ def display_final_summary_table(data, principal_series):
             continue
 
         # 마지막 유효 값 (최종 자산 가치)
-        # NaN 처리 후 마지막 값을 가져오기 위해 iloc 대신 tail(1) 사용
         final_value = data[code].dropna().iloc[-1]
         
         profit_loss = final_value - total_invested_principal
@@ -105,23 +120,61 @@ codes = [c.strip() for c in [code1, code2, code3] if c.strip()]
 # 2. 적립식 시뮬레이션 로직
 # ==============================================================================
 @st.cache_data(show_spinner="⏳ 데이터 로딩 및 시뮬레이션 계산 중...")
-def simulate_monthly_investment(code, start_date, end_date, monthly_amount):
-    """월별 정액 적립식 투자의 누적 가치를 시뮬레이션합니다."""
+def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate_series):
+    """
+    월별 정액 적립식 투자의 누적 가치를 시뮬레이션합니다.
+    rate_series (USD/KRW)를 사용하여 미국 주식의 환율 변동을 반영합니다.
+    """
     try:
         df = fdr.DataReader(code, start_date, end_date)
         close = df['Close']
         cumulative = pd.Series(0.0, index=close.index)
         shares = 0
         last_month = -1
+        is_kr_stock = is_korean_stock(code)
+        
+        # 환율 데이터가 없는 경우를 대비해 1300원으로 채워넣음 (최종 fallback)
+        default_rate = 1300.0
+        
+        # 주식 데이터 인덱스에 맞춰 환율 데이터를 정렬 및 결측치 채우기
+        if rate_series is not None and not rate_series.empty:
+            aligned_rate = rate_series.reindex(close.index, method='ffill').fillna(default_rate)
+        else:
+            aligned_rate = pd.Series(default_rate, index=close.index)
+
+
         for date, price in close.items():
             current_month = date.month
+            
+            # 1. 투자 금액 (현지 통화) 결정
+            if is_kr_stock:
+                # 한국 주식: KRW 투자 / KRW 가격
+                investment_amount_local = monthly_amount
+                exchange_rate = 1.0 # 환율 무시
+            else:
+                # 미국 주식: KRW 투자 -> USD로 환전
+                exchange_rate = aligned_rate.loc[date]
+                investment_amount_local = monthly_amount / exchange_rate # USD 금액
+
+            # 2. 주식 매수 (월별 첫 거래일)
             if current_month != last_month:
-                shares += monthly_amount / price
+                shares += investment_amount_local / price
                 last_month = date.month
-            cumulative[date] = shares * price
-        cumulative.name = code
-        return cumulative[cumulative.cumsum() != 0] # 첫 투자 시점 이후 데이터만 반환
-    except Exception:
+            
+            # 3. 누적 자산 가치 (KRW 기준) 계산
+            if is_kr_stock:
+                # 한국 주식: 주식 수 * KRW 가격
+                cumulative[date] = shares * price 
+            else:
+                # 미국 주식: 주식 수 * USD 가격 * 최종 평가일 KRW/USD 환율
+                final_rate = aligned_rate.loc[date]
+                cumulative[date] = shares * price * final_rate
+                
+        # 첫 투자 시점 이후 데이터만 반환
+        return cumulative[cumulative.cumsum() != 0] 
+        
+    except Exception as e:
+        # st.error(f"디버깅용 - simulate_monthly_investment 에러 for {code}: {e}")
         st.warning(f"⚠️ 종목 코드 **{code}**의 데이터를 불러오는 데 문제가 발생했습니다.")
         return None
 
@@ -131,9 +184,13 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount):
 
 if codes:
     
+    # 환율 데이터 선취 및 캐싱
+    usd_krw_rate_series = get_usd_krw_rate(start_date, end_date)
+
     dfs = []
     for c in codes:
-        series = simulate_monthly_investment(c, start_date, end_date, monthly_amount_krw)
+        # 환율 데이터를 시뮬레이션 함수에 전달
+        series = simulate_monthly_investment(c, start_date, end_date, monthly_amount_krw, usd_krw_rate_series)
         if series is not None:
             dfs.append(series)
             
