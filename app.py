@@ -237,12 +237,13 @@ if codes:
         frames=frames
     )
     
-    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (범례 하단으로 이동 및 속도 개선)
+    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (차트 오른쪽 바깥으로 확실히 이동)
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                             x=1.02, # x축 위치 (차트 오른쪽, 범례 근처)
-                             y=0.85, # y축 위치 (범례 아래쪽)
+                             # x=1.2, y=0.7로 조정하여 차트와 범례 영역 밖으로 확실히 분리
+                             x=1.2, 
+                             y=0.7, 
                              showactive=False,
                              buttons=[
                                  dict(label="▶️ 재생 시작", 
@@ -260,7 +261,7 @@ if codes:
     st.plotly_chart(fig, use_container_width=True)
     
     if st.session_state.display_mode == 'animation':
-        st.caption("차트 우측 상단(범례 하단)의 '▶️ 재생 시작' 버튼과 시간 슬라이더를 사용하여 애니메이션을 제어하세요.")
+        st.caption("차트 우측 상단의 '▶️ 재생 시작' 버튼과 시간 슬라이더를 사용하여 애니메이션을 제어하세요.")
     else:
         st.caption("현재 '최종 결과 바로 표시' 모드입니다. 왼쪽 버튼을 눌러 애니메이션 모드로 전환하세요.")
 
