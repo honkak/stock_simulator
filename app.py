@@ -2,15 +2,17 @@ import streamlit as st
 import FinanceDataReader as fdr
 import datetime
 import pandas as pd
-import plotly.graph_objects as go # Plotly graph_objects 사용
+import plotly.graph_objects as go
+import time # 실시간 업데이트를 위한 지연 시간 제어
 
 # ==============================================================================
 # 0. Session State 및 UI Helper Functions
 # ==============================================================================
 
 # 차트 표시 모드 초기화 ('animation' 또는 'static')
+# Plotly Animation과 Streamlit UI 동시 업데이트를 위해 'animation_loop' 모드 추가
 if 'display_mode' not in st.session_state:
-    st.session_state.display_mode = 'animation'
+    st.session_state.display_mode = 'animation_loop' # 기본 모드를 실시간 업데이트 루프 모드로 변경
 
 # 한국 주식 코드 판별 헬퍼 (6자리 숫자로 판단)
 def is_korean_stock(code):
@@ -21,37 +23,34 @@ def is_korean_stock(code):
 def get_usd_krw_rate(start_date, end_date):
     """원/달러 환율(USD/KRW) 종가를 가져옵니다."""
     try:
-        # FDR에서 'USD/KRW' 코드를 사용하여 환율을 가져옴 (1 USD당 KRW)
         rate_df = fdr.DataReader('USD/KRW', start_date, end_date)
         return rate_df['Close'].rename('USD/KRW')
     except Exception:
         st.warning("⚠️ 원/달러 환율 데이터를 불러오는데 실패했습니다. 미국 주식 계산에 환율이 적용되지 않습니다. (1 USD = 1,300 KRW 가정)")
         return pd.Series(1300.0, index=pd.to_datetime([])) # 기본값 1,300 KRW/USD 가정
 
-# 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수
-# ********************** 수정 사항 1: data, principal_series를 특정 날짜까지 자름 **********************
-def display_final_summary_table(data, principal_series, cutoff_date=None):
-    """지정된 날짜(cutoff_date)까지의 데이터를 바탕으로 투자 요약 테이블을 계산하고 표시합니다."""
+# ********************** 수정/추가된 부분: 실시간 요약 테이블 업데이트 함수 **********************
+def update_summary_table(data_up_to_date, principal_series_full, current_index, monthly_amount_krw, placeholder):
+    """
+    특정 시점까지의 데이터를 바탕으로 투자 요약 테이블을 계산하고 
+    지정된 플레이스홀더에 표시합니다.
+    """
     
-    # Cutoff date 적용 (만약 지정되었다면)
-    if cutoff_date:
-        data_cut = data[data.index <= cutoff_date]
-        principal_series_cut = principal_series[principal_series.index <= cutoff_date]
-    else:
-        data_cut = data
-        principal_series_cut = principal_series
-
-    valid_data_length = len(principal_series_cut.dropna())
+    # 1. 현재 시점까지의 데이터 슬라이싱
+    data_cut = data_up_to_date.iloc[:current_index + 1]
+    
+    # 2. 총 적립 원금 계산 (full series에서 현재 인덱스까지의 값 사용)
+    principal_series_cut = principal_series_full.iloc[:current_index + 1].dropna()
+    valid_data_length = len(principal_series_cut)
+    
     if valid_data_length == 0:
         return
         
-    max_index = valid_data_length - 1
-    # 마지막 유효 적립 원금
-    total_invested_principal = principal_series_cut.iloc[max_index]
+    total_invested_principal = principal_series_cut.iloc[-1]
 
     investment_summary = []
-
-    # 1. 총 적립 원금 행을 첫 번째로 추가
+    
+    # 3. 총 적립 원금 행
     principal_value = total_invested_principal
     if principal_value > 0:
         investment_summary.append({
@@ -62,47 +61,156 @@ def display_final_summary_table(data, principal_series, cutoff_date=None):
             '수익률 (%)': f"{0.00:,.2f}%"
         })
 
-    # 2. 각 종목별 최종 결과 추가
+    # 4. 각 종목별 결과 계산
     for code in data_cut.columns:
         if code == '총 적립 원금':
             continue
 
         # 마지막 유효 값 (최종 자산 가치)
-        # data_cut의 마지막 행은 항상 유효한 값을 포함해야 하므로, 마지막 인덱스 사용
-        if not data_cut[code].empty:
-             final_value = data_cut[code].iloc[-1]
-        else:
-             continue # 해당 시점까지 데이터가 없다면 건너뛰기
-
+        final_value = data_cut[code].iloc[-1]
         
         profit_loss = final_value - total_invested_principal
         return_rate = (profit_loss / total_invested_principal) * 100 if total_invested_principal > 0 else 0
+
+        # 수익/손실 색상 코드 (HTML 마크다운 사용)
+        color = 'red' if profit_loss < 0 else ('blue' if profit_loss > 0 else 'black')
+        
+        investment_summary.append({
+            '종목': code,
+            '총 투자 원금 (원)': f"{total_invested_principal:,.0f}",
+            '현재 자산 가치 (원)': f"{final_value:,.0f}",
+            '수익 / 손실 (원)': f"<span style='color:{color}; font-weight:bold;'>{profit_loss:,.0f}</span>",
+            '수익률 (%)': f"<span style='color:{color}; font-weight:bold;'>{return_rate:,.2f}%</span>"
+        })
+
+    if investment_summary:
+        summary_df = pd.DataFrame(investment_summary)
+        summary_date_str = pd.to_datetime(data_cut.index[-1]).strftime('%Y년 %m월 %d일')
+        
+        # 5. 플레이스홀더에 최종 결과 렌더링
+        with placeholder.container():
+            st.markdown(f"#### 🚀 실시간 시뮬레이션 요약 (기준일: **{summary_date_str}**)")
+            st.dataframe(
+                summary_df, 
+                hide_index=True,
+                use_container_width=True,
+                # HTML 마크다운이 적용되도록 설정
+                column_config={
+                    '수익 / 손실 (원)': st.column_config.MarkdownColumn('수익 / 손실 (원)'),
+                    '수익률 (%)': st.column_config.MarkdownColumn('수익률 (%)'),
+                }
+            )
+
+
+# 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수 (정적/최종 결과용)
+def display_final_summary_table_static(data, principal_series):
+    """최종 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 표시합니다."""
+    # update_summary_table과 동일한 로직을 사용하되, 플레이스홀더 없이 직접 표시
+    data_cut = data
+    principal_series_cut = principal_series.dropna()
+    
+    valid_data_length = len(principal_series_cut)
+    if valid_data_length == 0:
+        return
+        
+    total_invested_principal = principal_series_cut.iloc[-1]
+
+    investment_summary = []
+    
+    # 1. 총 적립 원금 행
+    principal_value = total_invested_principal
+    if principal_value > 0:
+        investment_summary.append({
+            '종목': '총 적립 원금',
+            '총 투자 원금 (원)': f"{principal_value:,.0f}",
+            '현재 자산 가치 (원)': f"{principal_value:,.0f}",
+            '수익 / 손실 (원)': f"{0:,.0f}", 
+            '수익률 (%)': f"{0.00:,.2f}%"
+        })
+
+    # 2. 각 종목별 결과 계산
+    for code in data_cut.columns:
+        if code == '총 적립 원금':
+            continue
+
+        final_value = data_cut[code].iloc[-1]
+        
+        profit_loss = final_value - total_invested_principal
+        return_rate = (profit_loss / total_invested_principal) * 100 if total_invested_principal > 0 else 0
+        
+        color = 'red' if profit_loss < 0 else ('blue' if profit_loss > 0 else 'black')
 
         investment_summary.append({
             '종목': code,
             '총 투자 원금 (원)': f"{total_invested_principal:,.0f}",
             '현재 자산 가치 (원)': f"{final_value:,.0f}",
-            '수익 / 손실 (원)': f"{profit_loss:,.0f}", 
-            '수익률 (%)': f"{return_rate:,.2f}%"
+            '수익 / 손실 (원)': f"<span style='color:{color}; font-weight:bold;'>{profit_loss:,.0f}</span>",
+            '수익률 (%)': f"<span style='color:{color}; font-weight:bold;'>{return_rate:,.2f}%</span>"
         })
 
     if investment_summary:
         summary_df = pd.DataFrame(investment_summary)
-        # 현재 요약된 날짜를 제목에 추가
-        summary_date_str = pd.to_datetime(data_cut.index[-1]).strftime('%Y년 %m월 %d일')
-        st.markdown(f"#### 최종 시뮬레이션 요약 (기준일: {summary_date_str})")
+        st.markdown("#### 최종 시뮬레이션 요약")
         st.dataframe(
             summary_df, 
             hide_index=True,
             use_container_width=True,
+            column_config={
+                '수익 / 손실 (원)': st.column_config.MarkdownColumn('수익 / 손실 (원)'),
+                '수익률 (%)': st.column_config.MarkdownColumn('수익률 (%)'),
+            }
         )
 
+# ********************** simulate_monthly_investment 함수 (변경 없음) **********************
+@st.cache_data(show_spinner="⏳ 데이터 로딩 및 시뮬레이션 계산 중...")
+def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate_series):
+    """월별 정액 적립식 투자의 누적 가치를 시뮬레이션합니다."""
+    try:
+        df = fdr.DataReader(code, start_date, end_date)
+        close = df['Close']
+        cumulative = pd.Series(0.0, index=close.index)
+        shares = 0
+        last_month = -1
+        is_kr_stock = is_korean_stock(code)
+        
+        default_rate = 1300.0
+        if rate_series is not None and not rate_series.empty:
+            aligned_rate = rate_series.reindex(close.index, method='ffill').fillna(default_rate)
+        else:
+            aligned_rate = pd.Series(default_rate, index=close.index)
+
+
+        for date, price in close.items():
+            current_month = date.month
+            
+            if is_kr_stock:
+                investment_amount_local = monthly_amount
+            else:
+                exchange_rate = aligned_rate.loc[date]
+                investment_amount_local = monthly_amount / exchange_rate 
+
+            if current_month != last_month:
+                shares += investment_amount_local / price
+                last_month = date.month
+            
+            if is_kr_stock:
+                cumulative[date] = shares * price 
+            else:
+                final_rate = aligned_rate.loc[date]
+                cumulative[date] = shares * price * final_rate
+                
+        cumulative.name = code
+        return cumulative[cumulative.cumsum() != 0] 
+        
+    except Exception:
+        st.warning(f"⚠️ 종목 코드 **{code}**의 데이터를 불러오는 데 문제가 발생했습니다.")
+        return None
+
 # ==============================================================================
-# 1. UI 및 입력 설정
+# 1. UI 및 입력 설정 (생략 - 변경 없음)
 # ==============================================================================
 st.markdown("<h2 style='font-size: 24px; text-align: center; margin-bottom: 20px;'>💰 적립식 투자 시뮬레이션 (부드러운 Plotly 애니메이션) 📈</h2>", unsafe_allow_html=True)
 
-# 1.1. 날짜 입력
 col_start_date, col_end_date = st.columns(2)
 with col_start_date:
     start_date = st.date_input("📅 조회 시작일", datetime.datetime(2022, 1, 1), max_value=datetime.datetime.now())
@@ -115,15 +223,13 @@ if start_date > end_date:
 
 st.markdown("---")
 
-# 1.2. 적립 금액 입력 (한 줄 위로 이동)
 monthly_amount_krw = st.number_input(
     '💵 매월 적립 금액 (원)',
     min_value=1000,
-    value=500000, # 50만원 기본값
+    value=500000, 
     step=10000
 )
 
-# 1.3. 종목 코드 입력
 col_code1, col_code2, col_code3 = st.columns(3)
 with col_code1: code1 = st.text_input('종목코드 1', value='QQQ', placeholder='(예시) QQQ')
 with col_code2: code2 = st.text_input('종목코드 2', value='005930', placeholder='(예시) 005930')
@@ -133,71 +239,6 @@ st.markdown("---")
 
 codes = [c.strip() for c in [code1, code2, code3] if c.strip()]
 
-# ==============================================================================
-# 2. 적립식 시뮬레이션 로직 (생략 - 변경 없음)
-# ==============================================================================
-@st.cache_data(show_spinner="⏳ 데이터 로딩 및 시뮬레이션 계산 중...")
-def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate_series):
-    """
-    월별 정액 적립식 투자의 누적 가치를 시뮬레이션합니다.
-    rate_series (USD/KRW)를 사용하여 미국 주식의 환율 변동을 반영합니다.
-    """
-    try:
-        df = fdr.DataReader(code, start_date, end_date)
-        close = df['Close']
-        cumulative = pd.Series(0.0, index=close.index)
-        shares = 0
-        last_month = -1
-        is_kr_stock = is_korean_stock(code)
-        
-        # 환율 데이터가 없는 경우를 대비해 1300원으로 채워넣음 (최종 fallback)
-        default_rate = 1300.0
-        
-        # 주식 데이터 인덱스에 맞춰 환율 데이터를 정렬 및 결측치 채우기
-        if rate_series is not None and not rate_series.empty:
-            aligned_rate = rate_series.reindex(close.index, method='ffill').fillna(default_rate)
-        else:
-            aligned_rate = pd.Series(default_rate, index=close.index)
-
-
-        for date, price in close.items():
-            current_month = date.month
-            
-            # 1. 투자 금액 (현지 통화) 결정
-            if is_kr_stock:
-                # 한국 주식: KRW 투자 / KRW 가격
-                investment_amount_local = monthly_amount
-                exchange_rate = 1.0 # 환율 무시
-            else:
-                # 미국 주식: KRW 투자 -> USD로 환전
-                exchange_rate = aligned_rate.loc[date]
-                investment_amount_local = monthly_amount / exchange_rate # USD 금액
-
-            # 2. 주식 매수 (월별 첫 거래일)
-            if current_month != last_month:
-                shares += investment_amount_local / price
-                last_month = date.month
-            
-            # 3. 누적 자산 가치 (KRW 기준) 계산
-            if is_kr_stock:
-                # 한국 주식: 주식 수 * KRW 가격
-                cumulative[date] = shares * price 
-            else:
-                # 미국 주식: 주식 수 * USD 가격 * 최종 평가일 KRW/USD 환율
-                final_rate = aligned_rate.loc[date]
-                cumulative[date] = shares * price * final_rate
-                
-        # --- CRITICAL FIX: Series 이름을 종목 코드로 명시적으로 설정 ---
-        cumulative.name = code
-        # -------------------------------------------------------------
-        
-        # 첫 투자 시점 이후 데이터만 반환
-        return cumulative[cumulative.cumsum() != 0] 
-        
-    except Exception as e:
-        # st.error(f"디버깅용 - simulate_monthly_investment 에러 for {code}: {e}")
-        st.warning(f"⚠️ 종목 코드 **{code}**의 데이터를 불러오는 데 문제가 발생했습니다.")
-        return None
 
 # ==============================================================================
 # 3. 메인 실행 블록
@@ -205,12 +246,10 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate
 
 if codes:
     
-    # 환율 데이터 선취 및 캐싱
     usd_krw_rate_series = get_usd_krw_rate(start_date, end_date)
 
     dfs = []
     for c in codes:
-        # 환율 데이터를 시뮬레이션 함수에 전달
         series = simulate_monthly_investment(c, start_date, end_date, monthly_amount_krw, usd_krw_rate_series)
         if series is not None:
             dfs.append(series)
@@ -219,12 +258,9 @@ if codes:
         st.warning("유효한 데이터가 없습니다. 종목 코드나 날짜를 확인해 주세요.")
         st.stop()
         
-    # 데이터 병합 후, NaN 값을 직전 유효 값으로 채우고 모든 열이 NaN인 행만 제거하여 안정성 확보
     data = pd.concat(dfs, axis=1).ffill().dropna(how='all')
 
-    # ==============================================================================
     # 3.1. 총 적립 원금 계산
-    # ==============================================================================
     cumulative_principal = pd.Series(0.0, index=data.index)
     total = 0
     last_month = -1
@@ -237,191 +273,170 @@ if codes:
     data['총 적립 원금'] = cumulative_principal
 
 
-    # ********************** 수정 사항 2: 동적 업데이트를 위한 날짜 선택 **********************
-    # 정적 모드일 때만 날짜 슬라이더를 표시
-    if st.session_state.display_mode == 'static' and not data.empty:
-        # data 인덱스에서 가장 이른 날짜와 가장 늦은 날짜를 추출
-        min_date = data.index.min().to_pydatetime().date()
-        max_date = data.index.max().to_pydatetime().date()
-        
-        # 슬라이더 추가: 마지막 날짜를 기본값으로 설정
-        # (차트와 요약표가 슬라이더 값에 따라 움직임)
-        selected_date = st.slider(
-            '날짜별 시뮬레이션 결과 보기 (정적 모드)',
-            min_value=min_date,
-            max_value=max_date,
-            value=max_date,
-            step=datetime.timedelta(days=1), # 하루 단위로 이동
-            format='YYYY/MM/DD',
-            key='date_slider'
-        )
-        
-        # 차트 및 요약표에 사용될 데이터는 선택된 날짜까지로 자름
-        data_to_render = data[data.index <= pd.to_datetime(selected_date)]
-    else:
-        # 애니메이션 모드 또는 데이터가 없을 경우
-        selected_date = None
-        data_to_render = data # 애니메이션 프레임에서 알아서 처리할 전체 데이터
-
-    # ==============================================================================
     # 3.2. 제목 및 버튼 (좌우 배치)
-    # ==============================================================================
     col_title, col_button = st.columns([1, 0.4])
 
     with col_title:
         st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
 
     with col_button:
-        # '최종 결과 바로 표시' 버튼 로직 (상태 토글)
-        button_label = '최종 결과 바로 표시 (동적 요약)' if st.session_state.display_mode == 'animation' else '애니메이션 모드로 돌아가기'
+        # '애니메이션' 모드 버튼 토글
+        button_label = '최종 결과 바로 표시' if st.session_state.display_mode == 'animation_loop' else '실시간 애니메이션으로 돌아가기'
         if st.button(
             button_label,
             use_container_width=True, 
             key='toggle_result',
             help="차트 표시 모드를 전환합니다."
         ):
-            # 토글 시, 정적 모드면 마지막 날짜를 기본값으로 설정
-            new_mode = 'static' if st.session_state.display_mode == 'animation' else 'animation'
-            st.session_state.display_mode = new_mode
-            if new_mode == 'static' and 'date_slider' in st.session_state:
-                st.session_state['date_slider'] = data.index.max().to_pydatetime().date()
+            st.session_state.display_mode = 'static' if st.session_state.display_mode == 'animation_loop' else 'animation_loop'
             st.rerun() # 상태가 변경되었으므로 재실행하여 차트를 다시 그립니다.
 
+    # ********************** 수정/추가된 부분: 플레이스홀더 설정 **********************
+    # 차트와 요약표를 위한 플레이스홀더를 준비
+    chart_placeholder = st.empty()
+    summary_placeholder = st.empty()
 
-    # ==============================================================================
-    # 3.3. Plotly go.Figure 기반 애니메이션 (월별 프레임 최적화 및 동적 스케일링)
-    # ==============================================================================
+
+    # 3.3. Plotly go.Figure 기반 애니메이션
     
     # 1. 월별 첫 거래일 인덱스 추출 (프레임 최적화)
     data['YearMonth'] = data.index.to_series().dt.to_period('M')
-    monthly_indices = data.groupby('YearMonth').apply(lambda x: x.index[0]).tolist()
+    # 월별 첫 거래일의 인덱스 번호 리스트
+    monthly_index_numbers = data.groupby('YearMonth').apply(lambda x: data.index.get_loc(x.index[0])).tolist()
     data = data.drop(columns=['YearMonth'])
     
-    # === 마지막 유효 날짜를 프레임에 강제로 추가하여 애니메이션이 끝까지 재생되도록 보장 ===
-    last_available_date = data.index[-1]
-    if last_available_date not in monthly_indices:
-        monthly_indices.append(last_available_date)
+    # === 마지막 유효 날짜를 프레임에 강제로 추가하여 재생이 끝까지 진행되도록 보장 ===
+    last_index = len(data) - 1
+    if last_index not in monthly_index_numbers:
+        monthly_index_numbers.append(last_index)
     # =============================================================================================
     
-    # 2. 프레임 생성
-    frames = []
-    # 애니메이션 모드일 경우에만 프레임을 생성
-    if st.session_state.display_mode == 'animation':
-        for date in monthly_indices:
-            if date not in data.index:
-                continue
-
-            k = data.index.get_loc(date) 
-            
-            frame_data = []
-            for col in data.columns:
-                # --- 수정된 부분: 짙은 회색 ('dimgray')와 촘촘한 점선 ('dot') 적용 ---
-                line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
-                # ------------------------------------------------------------------
-                
-                frame_data.append(
-                    go.Scatter(
-                        x=data.index[:k+1], 
-                        y=data[col][:k+1], 
-                        mode='lines', 
-                        name=col, # 종목 코드를 name으로 직접 전달
-                        line=line_style if line_style else None
-                    )
-                )
-
-            # 동적 Y축 범위 계산: 현재 시점까지의 최대 자산 가치 (+10% 여유)
-            # 총 적립 원금 라인은 범위 계산에서 제외
-            max_val_up_to_k = data.iloc[:k+1].drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1
-            if max_val_up_to_k == 0:
-                max_val_up_to_k = monthly_amount_krw * 2 # 최소값 보장
-
-            frames.append(go.Frame(data=frame_data, name=date.strftime('%Y-%m-%d'), 
-                                   layout=go.Layout(
-                                       title=f"누적 자산 가치 변화 (시점: {date.strftime('%Y년 %m월 %d일')})",
-                                       # 동적 Y축 스케일링 적용
-                                       yaxis=dict(range=[0, max_val_up_to_k]) 
-                                   )))
     
-    # 3. 초기/정적 데이터 트레이스 생성
-    initial_data = []
-    
-    # 정적 모드일 경우 data_to_render 사용, 애니메이션 모드일 경우 첫 행만 사용
-    data_for_trace = data_to_render if st.session_state.display_mode == 'static' else data.iloc[[0]]
-
-    for col in data.columns:
-        # --- 수정된 부분: 짙은 회색 ('dimgray')와 촘촘한 점선 ('dot') 적용 ---
-        line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
-        # ------------------------------------------------------------------
+    # 2. 실시간 업데이트 루프 (animation_loop 모드일 때만 실행)
+    if st.session_state.display_mode == 'animation_loop':
         
-        initial_data.append(
-            go.Scatter(
-                x=data_for_trace.index, 
-                y=data_for_trace[col], 
-                mode='lines', 
-                name=col, # 종목 코드를 name으로 직접 전달
-                line=line_style if line_style else None
+        # 애니메이션이 시작되었다는 것을 사용자에게 알리는 캡션
+        st.caption("📈 실시간 애니메이션 중... (아래 표를 확인하세요)")
+        
+        # Plotly Figure 초기 생성 (첫 번째 데이터만 포함)
+        initial_data = []
+        for col in data.columns:
+            line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
+            initial_data.append(
+                go.Scatter(
+                    x=data.index[:1], 
+                    y=data[col][:1], 
+                    mode='lines', 
+                    name=col,
+                    line=line_style if line_style else None
+                )
+            )
+
+        initial_max_val = monthly_amount_krw * 2 
+        
+        fig = go.Figure(
+            data=initial_data,
+            layout=go.Layout(
+                title="누적 자산 가치 변화 (실시간 업데이트 중)",
+                xaxis=dict(title="날짜"),
+                yaxis=dict(title="가치 (원)", range=[0, initial_max_val], tickformat=',.0f'), 
+                height=550,
             )
         )
 
-    # 4. Figure 생성 및 버튼 위치 조정
-    
-    # 초기 Y축 범위 설정: 초기에는 첫 몇 달 투자금에 맞춰 확대되도록 설정
-    # 정적 모드일 경우: 현재 선택된 날짜까지의 최대값 사용
-    if st.session_state.display_mode == 'static':
-        initial_max_val = data_to_render.drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1
+        
+        # ********************** 실시간 업데이트 루프 시작 **********************
+        
+        # 루프를 통해 차트와 테이블을 동시에 업데이트
+        for i in monthly_index_numbers:
+            
+            # 1. 차트 데이터 업데이트 (새로운 프레임)
+            frame_data = []
+            max_val_up_to_i = 0
+            
+            # 현재 시점까지의 데이터만 사용
+            current_data_for_anim = data.iloc[:i+1]
+            
+            for col in data.columns:
+                line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
+                
+                trace = go.Scatter(
+                    x=current_data_for_anim.index, 
+                    y=current_data_for_anim[col], 
+                    mode='lines', 
+                    name=col,
+                    line=line_style if line_style else None
+                )
+                frame_data.append(trace)
+            
+            # 동적 Y축 범위 계산
+            current_max = current_data_for_anim.drop(columns=['총 적립 원금'], errors='ignore').max().max()
+            max_val_up_to_i = current_max * 1.1 if current_max > 0 else monthly_amount_krw * 2
+            
+            # Figure 업데이트
+            fig.data = frame_data
+            fig.update_layout(
+                title=f"누적 자산 가치 변화 (시점: {current_data_for_anim.index[-1].strftime('%Y년 %m월 %d일')})",
+                yaxis=dict(range=[0, max_val_up_to_i], title="가치 (원)", tickformat=',.0f')
+            )
+            
+            # 2. 차트 플레이스홀더에 표시
+            with chart_placeholder:
+                st.plotly_chart(fig, use_container_width=True)
+                
+            # 3. 요약 테이블 업데이트 (실시간)
+            update_summary_table(
+                data, # 전체 데이터 사용
+                cumulative_principal, 
+                i, # 현재 인덱스
+                monthly_amount_krw, 
+                summary_placeholder # 테이블 플레이스홀더
+            )
+
+            # 4. 애니메이션 속도 조절
+            time.sleep(0.15) # 150ms 지연 (월별 업데이트 속도)
+
+        # 최종 결과 표시 후 캡션 초기화
+        st.caption("✅ 실시간 애니메이션이 완료되었습니다.")
+            
+        
+    # 3.4. 정적/최종 결과 모드 (static)
     else:
-        # 애니메이션 모드일 경우: 데이터의 첫 3행의 최대값 사용
-        initial_max_val = data.iloc[:3].drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1 
-    
-    if initial_max_val == 0:
-        initial_max_val = monthly_amount_krw * 2 # 최소값 보장
         
-    # 차트 제목 설정 (정적 모드 시 선택된 날짜 반영)
-    chart_title = "누적 자산 가치 변화"
-    if st.session_state.display_mode == 'static' and selected_date:
-        chart_title = f"누적 자산 가치 변화 (기준일: {selected_date.strftime('%Y년 %m월 %d일')})"
+        # 정적 모드일 경우 Plotly 기본 figure만 생성 (전체 데이터)
+        static_data = []
+        for col in data.columns:
+            line_style = dict(color='dimgray', width=2, dash='dot') if col == '총 적립 원금' else None
+            static_data.append(
+                go.Scatter(
+                    x=data.index, 
+                    y=data[col], 
+                    mode='lines', 
+                    name=col,
+                    line=line_style if line_style else None
+                )
+            )
         
-    fig = go.Figure(
-        data=initial_data,
-        layout=go.Layout(
-            title=chart_title,
-            xaxis=dict(title="날짜"),
-            # 초기 Y축 범위 설정
-            yaxis=dict(title="가치 (원)", range=[0, initial_max_val], tickformat=',.0f'), 
-            height=550,
-        ),
-        frames=frames
-    )
-    
-    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (차트 오른쪽 바깥으로 확실히 이동)
-    if st.session_state.display_mode == 'animation':
-        fig.update_layout(
-            updatemenus=[dict(type="buttons",
-                              # x=1.21으로 조정하여 오른쪽으로 더 이동
-                              x=1.21, 
-                              y=0.7, 
-                              showactive=False,
-                              buttons=[
-                                  dict(label="▶️ 재생 시작", 
-                                       method="animate", 
-                                       args=[None, {"frame": {"duration": 150, "redraw": True}, # 속도 2배 늦춤 (150ms/월)
-                                                    "fromcurrent": True, 
-                                                    "transition": {"duration": 20, "easing": "linear"}}]), # 반응 속도 개선
-                                  dict(label="⏸️ 정지", 
-                                       method="animate", 
-                                       args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])
-                              ])]
+        # Y축 범위 설정 (전체 데이터 기준)
+        max_val = data.drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1
+        if max_val == 0:
+            max_val = monthly_amount_krw * 2
+
+        fig = go.Figure(
+            data=static_data,
+            layout=go.Layout(
+                title="누적 자산 가치 변화 (최종 결과)",
+                xaxis=dict(title="날짜"),
+                yaxis=dict(title="가치 (원)", range=[0, max_val], tickformat=',.0f'), 
+                height=550,
+            )
         )
+        
+        with chart_placeholder:
+            st.plotly_chart(fig, use_container_width=True)
+            
+        st.caption("현재 '최종 결과 바로 표시' 모드입니다. 왼쪽 버튼을 눌러 실시간 애니메이션 모드로 전환하세요.")
 
-    # 5. 차트 표시
-    st.plotly_chart(fig, use_container_width=True)
-    
-    if st.session_state.display_mode == 'animation':
-        st.caption("차트 우측 상단(범례 하단)의 '▶️ 재생 시작' 버튼과 시간 슬라이더를 사용하여 애니메이션을 제어하세요.")
-    else:
-        st.caption("현재 '최종 결과 바로 표시 (동적 요약)' 모드입니다. 상단의 **날짜 슬라이더**를 움직여 요약 결과를 실시간으로 확인하세요.")
-
-    # 6. 최종 요약 테이블 표시
-    # ********************** 수정 사항 3: 슬라이더 선택 날짜를 summary 함수에 전달 **********************
-    # 정적 모드일 경우 selected_date를 전달하여 해당 날짜까지의 요약을 표시
-    display_final_summary_table(data, cumulative_principal, selected_date)
+        # 6. 최종 요약 테이블 표시
+        with summary_placeholder:
+            display_final_summary_table_static(data, cumulative_principal)
