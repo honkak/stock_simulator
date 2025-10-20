@@ -189,7 +189,7 @@ if codes:
     monthly_indices = data.groupby('YearMonth').apply(lambda x: x.index[0]).tolist()
     data = data.drop(columns=['YearMonth'])
     
-    # === [수정 부분]: 마지막 유효 날짜를 프레임에 강제로 추가하여 애니메이션이 끝까지 재생되도록 보장 ===
+    # === 마지막 유효 날짜를 프레임에 강제로 추가하여 애니메이션이 끝까지 재생되도록 보장 ===
     last_available_date = data.index[-1]
     if last_available_date not in monthly_indices:
         monthly_indices.append(last_available_date)
@@ -222,12 +222,12 @@ if codes:
                 )
 
             frames.append(go.Frame(data=frame_data, name=date.strftime('%Y-%m-%d'), 
-                                   layout=go.Layout(title=f"누적 자산 가치 변화 (시점: {date.strftime('%Y년 %m월')})")))
+                                   layout=go.Layout(title=f"누적 자산 가치 변화 (시점: {date.strftime('%Y년 %m월 %d일')})")))
     
     # 3. 초기/정적 데이터 트레이스 생성
     initial_data = []
     
-    # 정적 모드일 경우 모든 데이터를 포함
+    # 정적 모드일 경우 모든 데이터를 포함, 애니메이션 모드일 경우 첫 행만 포함
     data_to_render = data if st.session_state.display_mode == 'static' else data.iloc[[0]]
 
     for col in data.columns:
@@ -260,8 +260,8 @@ if codes:
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                             # x=1.2, y=0.7로 조정하여 차트와 범례 영역 밖으로 확실히 분리
-                             x=1.2, 
+                             # x=1.05, y=0.7로 조정하여 차트와 범례 영역 밖으로 확실히 분리
+                             x=1.05, 
                              y=0.7, 
                              showactive=False,
                              buttons=[
