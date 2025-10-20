@@ -189,6 +189,12 @@ if codes:
     monthly_indices = data.groupby('YearMonth').apply(lambda x: x.index[0]).tolist()
     data = data.drop(columns=['YearMonth'])
     
+    # === [수정 부분]: 마지막 유효 날짜를 프레임에 강제로 추가하여 애니메이션이 끝까지 재생되도록 보장 ===
+    last_available_date = data.index[-1]
+    if last_available_date not in monthly_indices:
+        monthly_indices.append(last_available_date)
+    # =============================================================================================
+    
     # 2. 프레임 생성
     frames = []
     # 애니메이션 모드일 경우에만 프레임을 생성
