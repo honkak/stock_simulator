@@ -3,7 +3,7 @@ import FinanceDataReader as fdr
 import datetime
 import pandas as pd
 import plotly.graph_objects as go # Plotly graph_objects 사용
-import time # time.sleep을 위해 import 추가
+import time 
 
 # ==============================================================================
 # 0. Session State 및 UI Helper Functions
@@ -12,6 +12,9 @@ import time # time.sleep을 위해 import 추가
 # 차트 표시 모드 초기화 ('animation' 또는 'static')
 if 'display_mode' not in st.session_state:
     st.session_state.display_mode = 'animation'
+# 🎯 [신규 상태] 애니메이션이 재생 중인지 여부 (초기: False)
+if 'animation_started' not in st.session_state:
+    st.session_state.animation_started = False 
 
 # 한국 주식 코드 판별 헬퍼 (6자리 숫자로 판단)
 def is_korean_stock(code):
@@ -84,43 +87,7 @@ def display_final_summary_table(data, principal_series):
         )
 
 # ==============================================================================
-# 1. UI 및 입력 설정
-# ==============================================================================
-st.markdown("<h2 style='font-size: 24px; text-align: center; margin-bottom: 20px;'>💰 적립식 투자 시뮬레이션 (부드러운 Plotly 애니메이션) 📈</h2>", unsafe_allow_html=True)
-
-# 1.1. 날짜 입력
-col_start_date, col_end_date = st.columns(2)
-with col_start_date:
-    start_date = st.date_input("📅 조회 시작일", datetime.datetime(2022, 1, 1), max_value=datetime.datetime.now())
-with col_end_date:
-    end_date = st.date_input("📅 조회 종료일", datetime.datetime.now(), max_value=datetime.datetime.now())
-
-if start_date > end_date:
-    st.warning("시작일이 종료일보다 늦습니다. 날짜를 자동으로 맞바꿔 반영합니다.")
-    start_date, end_date = end_date, start_date
-
-st.markdown("---")
-
-# 1.2. 적립 금액 입력 (한 줄 위로 이동)
-monthly_amount_krw = st.number_input(
-    '💵 매월 적립 금액 (원)',
-    min_value=1000,
-    value=500000, # 50만원 기본값
-    step=10000
-)
-
-# 1.3. 종목 코드 입력
-col_code1, col_code2, col_code3 = st.columns(3)
-with col_code1: code1 = st.text_input('종목코드 1', value='QQQ', placeholder='(예시) QQQ')
-with col_code2: code2 = st.text_input('종목코드 2', value='005930', placeholder='(예시) 005930')
-with col_code3: code3 = st.text_input('종목코드 3', value='AAPL', placeholder='(예시) AAPL')
-
-st.markdown("---")
-
-codes = [c.strip() for c in [code1, code2, code3] if c.strip()]
-
-# ==============================================================================
-# 2. 적립식 시뮬레이션 로직
+# 2. 적립식 시뮬레이션 로직 (이 부분은 변경 없음)
 # ==============================================================================
 @st.cache_data(show_spinner="⏳ 데이터 로딩 및 시뮬레이션 계산 중...")
 def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate_series):
@@ -188,6 +155,38 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate
 # ==============================================================================
 # 3. 메인 실행 블록
 # ==============================================================================
+st.markdown("<h2 style='font-size: 24px; text-align: center; margin-bottom: 20px;'>💰 적립식 투자 시뮬레이션 (부드러운 Plotly 애니메이션) 📈</h2>", unsafe_allow_html=True)
+
+# 1.1. 날짜 입력
+col_start_date, col_end_date = st.columns(2)
+with col_start_date:
+    start_date = st.date_input("📅 조회 시작일", datetime.datetime(2022, 1, 1), max_value=datetime.datetime.now())
+with col_end_date:
+    end_date = st.date_input("📅 조회 종료일", datetime.datetime.now(), max_value=datetime.datetime.now())
+
+if start_date > end_date:
+    st.warning("시작일이 종료일보다 늦습니다. 날짜를 자동으로 맞바꿔 반영합니다.")
+    start_date, end_date = end_date, start_date
+
+st.markdown("---")
+
+# 1.2. 적립 금액 입력
+monthly_amount_krw = st.number_input(
+    '💵 매월 적립 금액 (원)',
+    min_value=1000,
+    value=500000, # 50만원 기본값
+    step=10000
+)
+
+# 1.3. 종목 코드 입력
+col_code1, col_code2, col_code3 = st.columns(3)
+with col_code1: code1 = st.text_input('종목코드 1', value='QQQ', placeholder='(예시) QQQ')
+with col_code2: code2 = st.text_input('종목코드 2', value='005930', placeholder='(예시) 005930')
+with col_code3: code3 = st.text_input('종목코드 3', value='AAPL', placeholder='(예시) AAPL')
+
+st.markdown("---")
+
+codes = [c.strip() for c in [code1, code2, code3] if c.strip()]
 
 if codes:
     
@@ -239,8 +238,10 @@ if codes:
             key='toggle_result',
             help="차트 표시 모드를 전환합니다."
         ):
+            # 모드 전환 시 animation_started 상태 초기화
             st.session_state.display_mode = 'static' if st.session_state.display_mode == 'animation' else 'animation'
-            st.rerun() # 상태가 변경되었으므로 재실행하여 차트를 다시 그립니다.
+            st.session_state.animation_started = False # 상태 초기화
+            st.rerun() 
 
 
     # ==============================================================================
@@ -337,31 +338,45 @@ if codes:
         frames=frames
     )
     
+    # 🎯 [수정] 재생 버튼 클릭 시 animation_started 상태를 True로 설정하는 콜백 함수 추가
+    def start_animation():
+        st.session_state.animation_started = True
+
     # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (차트 오른쪽 바깥으로 확실히 이동)
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                             # x=1.21으로 조정하여 오른쪽으로 더 이동
                              x=1.21, 
                              y=0.7, 
                              showactive=False,
                              buttons=[
+                                 # 🎯 [수정] 재생 버튼에 콜백 함수 연결
                                  dict(label="▶️ 재생 시작", 
                                       method="animate", 
-                                      args=[None, {"frame": {"duration": 150, "redraw": True}, # 속도 2배 늦춤 (150ms/월)
+                                      args=[None, {"frame": {"duration": 150, "redraw": True}, 
                                                    "fromcurrent": True, 
-                                                   "transition": {"duration": 20, "easing": "linear"}}]), # 반응 속도 개선
+                                                   "transition": {"duration": 20, "easing": "linear"}}],
+                                      # Streamlit 버튼 클릭처럼 동작하도록 콜백을 직접 넣을 수 없으므로, 
+                                      # Streamlit 버튼을 하나 더 만들어 동기화하거나, 단순 안내 문구로 대체함.
+                                      # 여기서는 Streamlit 버튼을 추가하여 상태를 변경하도록 아래에 분리 구현
+                                      ), 
                                  dict(label="⏸️ 정지", 
                                       method="animate", 
                                       args=[[None], {"frame": {"duration": 0, "redraw": False}, "mode": "immediate"}])
                              ])]
         )
+        
+        # 🎯 [추가] Plotly 재생 버튼을 Streamlit 버튼으로 감싸서 상태 변경
+        if not st.session_state.animation_started:
+            if st.button("🔴 실시간 요약 시작/동기화", help="Plotly 차트의 재생 버튼을 누른 후, 이 버튼을 누르거나 새로고침하면 실시간 요약 테이블이 함께 갱신됩니다."):
+                 st.session_state.animation_started = True
+                 # st.rerun() # 재실행 시 Plotly 애니메이션이 정지될 수 있어, 상태만 변경
 
     # 5. 차트 표시
     st.plotly_chart(fig, use_container_width=True)
     
     if st.session_state.display_mode == 'animation':
-        st.caption("차트 우측 상단(범례 하단)의 '▶️ 재생 시작' 버튼과 시간 슬라이더를 사용하여 애니메이션을 제어하세요.")
+        st.caption("차트 우측 상단(범례 하단)의 '▶️ 재생 시작' 버튼과 시간 슬라이더를 사용하고, **'실시간 요약 시작/동기화' 버튼**을 눌러 요약표 갱신을 시작하세요.")
     else:
         st.caption("현재 '최종 결과 바로 표시' 모드입니다. 왼쪽 버튼을 눌러 애니메이션 모드로 전환하세요.")
 
@@ -376,42 +391,49 @@ if codes:
         total_frames = len(monthly_indices)
         frame_duration = 0.15  # seconds (150ms)
 
-        # import time # 이미 상단에서 임포트됨
+        # 🎯 [수정] animation_started 상태가 True일 때만 for 루프 실행
+        if st.session_state.animation_started:
 
-        for i, date in enumerate(monthly_indices):
-            # 현재 시점까지의 데이터 슬라이스
-            current_data = data.loc[:date]
+            for i, date in enumerate(monthly_indices):
+                # 현재 시점까지의 데이터 슬라이스
+                current_data = data.loc[:date]
 
-            # 누적 원금 계산 (지금까지의 월 수 × 월 납입금)
-            # monthly_indices는 월별 첫 거래일 인덱스 리스트이므로, i+1이 현재까지 납입된 월 수
-            invested_principal = monthly_amount_krw * (i + 1)
+                # 누적 원금 계산 (지금까지의 월 수 × 월 납입금)
+                invested_principal = monthly_amount_krw * (i + 1)
 
-            summary_list = []
-            for col in data.columns:
-                if col == '총 적립 원금':
-                    continue
-                latest_val = current_data[col].iloc[-1]
-                profit = latest_val - invested_principal
-                rate = (profit / invested_principal * 100) if invested_principal > 0 else 0
+                summary_list = []
+                
+                # 🎯 [추가] 총 적립 원금 행을 첫 번째로 추가
                 summary_list.append({
-                    '종목': col,
+                    '종목': '총 적립 원금',
                     '투자 원금(원)': f"{invested_principal:,.0f}",
-                    '현재 가치(원)': f"{latest_val:,.0f}",
-                    '수익(원)': f"{profit:,.0f}",
-                    '수익률(%)': f"{rate:,.2f}%"
+                    '현재 가치(원)': f"{invested_principal:,.0f}",
+                    '수익(원)': f"{0:,.0f}",
+                    '수익률(%)': f"{0.00:,.2f}%"
                 })
 
-            summary_df = pd.DataFrame(summary_list)
-            # st.dataframe 대신 placeholder.dataframe 사용
-            placeholder.dataframe(summary_df, use_container_width=True, hide_index=True)
+                for col in data.columns:
+                    if col == '총 적립 원금':
+                        continue
+                    latest_val = current_data[col].iloc[-1]
+                    profit = latest_val - invested_principal
+                    rate = (profit / invested_principal * 100) if invested_principal > 0 else 0
+                    summary_list.append({
+                        '종목': col,
+                        '투자 원금(원)': f"{invested_principal:,.0f}",
+                        '현재 가치(원)': f"{latest_val:,.0f}",
+                        '수익(원)': f"{profit:,.0f}",
+                        '수익률(%)': f"{rate:,.2f}%"
+                    })
 
-            # 프레임 재생 속도에 맞춰 일시정지 (0.15초)
-            time.sleep(frame_duration)
-        
-        # 애니메이션이 끝나면 최종 요약 테이블이 자동으로 표시되는 것은 아니므로, 
-        # 애니메이션 모드에서는 실시간 요약이 끝나면 최종 요약을 표시하지 않도록 합니다. 
-        # (원래 코드에서는 애니메이션이 끝나도 이어서 최종 요약을 표시했음)
+                summary_df = pd.DataFrame(summary_list)
+                placeholder.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+                # 프레임 재생 속도에 맞춰 일시정지 (0.15초)
+                time.sleep(frame_duration)
+            
+            st.session_state.animation_started = False # 애니메이션 완료 후 상태 초기화
 
     else:
-        # 6. 최종 요약 테이블 표시 (정적 모드일 때만 표시)
+        # 6. 최종 요약 테이블 표시 (정적 모드일 때 표시)
         display_final_summary_table(data, cumulative_principal)
