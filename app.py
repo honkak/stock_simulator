@@ -180,12 +180,11 @@ if codes:
 
 
     # ==============================================================================
-    # 3.3. Plotly go.Figure 기반 애니메이션 (월별 프레임 최적화)
+    # 3.3. Plotly go.Figure 기반 애니메이션 (월별 프레임 최적화 및 동적 스케일링)
     # ==============================================================================
     
     # 1. 월별 첫 거래일 인덱스 추출 (프레임 최적화)
     data['YearMonth'] = data.index.to_series().dt.to_period('M')
-    # 실제 데이터 인덱스에 존재하는 월별 첫 거래일만 추출하여 애니메이션 프레임으로 사용
     monthly_indices = data.groupby('YearMonth').apply(lambda x: x.index[0]).tolist()
     data = data.drop(columns=['YearMonth'])
     
@@ -200,7 +199,6 @@ if codes:
     # 애니메이션 모드일 경우에만 프레임을 생성
     if st.session_state.display_mode == 'animation':
         for date in monthly_indices:
-            # 해당 날짜가 현재 data.index에 존재하는지 안전하게 확인
             if date not in data.index:
                 continue
 
@@ -208,7 +206,6 @@ if codes:
             
             frame_data = []
             for col in data.columns:
-                # 원금 라인은 밝은 회색 점선으로 특별 스타일링
                 line_style = dict(color='lightgray', width=2, dash='dash') if col == '총 적립 원금' else None
                 
                 frame_data.append(
@@ -221,8 +218,18 @@ if codes:
                     )
                 )
 
+            # 동적 Y축 범위 계산: 현재 시점까지의 최대 자산 가치 (+10% 여유)
+            # 총 적립 원금 라인은 범위 계산에서 제외
+            max_val_up_to_k = data.iloc[:k+1].drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1
+            if max_val_up_to_k == 0:
+                max_val_up_to_k = monthly_amount_krw * 2 # 최소값 보장
+
             frames.append(go.Frame(data=frame_data, name=date.strftime('%Y-%m-%d'), 
-                                   layout=go.Layout(title=f"누적 자산 가치 변화 (시점: {date.strftime('%Y년 %m월 %d일')})")))
+                                   layout=go.Layout(
+                                       title=f"누적 자산 가치 변화 (시점: {date.strftime('%Y년 %m월 %d일')})",
+                                       # 동적 Y축 스케일링 적용
+                                       yaxis=dict(range=[0, max_val_up_to_k]) 
+                                   )))
     
     # 3. 초기/정적 데이터 트레이스 생성
     initial_data = []
@@ -244,13 +251,19 @@ if codes:
         )
 
     # 4. Figure 생성 및 버튼 위치 조정
+    
+    # 초기 Y축 범위 설정: 초기에는 첫 몇 달 투자금에 맞춰 확대되도록 설정
+    initial_max_val = data.iloc[:3].drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1 
+    if initial_max_val == 0:
+        initial_max_val = monthly_amount_krw * 2 # 최소값 보장
+
     fig = go.Figure(
         data=initial_data,
         layout=go.Layout(
             title="누적 자산 가치 변화",
             xaxis=dict(title="날짜"),
-            # Y축 범위는 전체 데이터의 최댓값보다 약간 크게 설정
-            yaxis=dict(title="가치 (원)", range=[0, data.max().max() * 1.1], tickformat=',.0f'), 
+            # 초기 Y축 범위 설정 (작은 값에 맞춰 시작)
+            yaxis=dict(title="가치 (원)", range=[0, initial_max_val], tickformat=',.0f'), 
             height=550,
         ),
         frames=frames
@@ -260,8 +273,8 @@ if codes:
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
-                             # x=1.05, y=0.7로 조정하여 차트와 범례 영역 밖으로 확실히 분리
-                             x=1.05, 
+                             # x=1.2로 조정하여 차트와 범례 영역 밖으로 확실히 분리
+                             x=1.25, 
                              y=0.7, 
                              showactive=False,
                              buttons=[
