@@ -67,7 +67,9 @@ def display_final_summary_table(data, principal_series):
             '종목': code,
             '총 투자 원금 (원)': f"{total_invested_principal:,.0f}",
             '현재 자산 가치 (원)': f"{final_value:,.0f}",
-            '수익 / 손실 (원)': f"{profit_rate:,.0f}", # 수정된 부분: profit_loss -> profit_rate
+            # --- 오류 수정 부분: profit_rate 대신 profit_loss 사용 ---
+            '수익 / 손실 (원)': f"{profit_loss:,.0f}", 
+            # --------------------------------------------------------
             '수익률 (%)': f"{return_rate:,.2f}%"
         })
 
