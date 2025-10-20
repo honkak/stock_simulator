@@ -15,7 +15,12 @@ if 'display_mode' not in st.session_state:
 # 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수
 def display_final_summary_table(data, principal_series):
     """최종 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 표시합니다."""
-    max_index = len(data) - 1
+    # NaN 값 때문에 max_index가 잘못 계산되는 것을 방지하기 위해 유효 데이터로 길이 계산
+    valid_data_length = len(principal_series.dropna())
+    if valid_data_length == 0:
+        return
+        
+    max_index = valid_data_length - 1
     total_invested_principal = principal_series.iloc[max_index]
 
     investment_summary = []
@@ -37,7 +42,8 @@ def display_final_summary_table(data, principal_series):
             continue
 
         # 마지막 유효 값 (최종 자산 가치)
-        final_value = data[code].iloc[-1]
+        # NaN 처리 후 마지막 값을 가져오기 위해 iloc 대신 tail(1) 사용
+        final_value = data[code].dropna().iloc[-1]
         
         profit_loss = final_value - total_invested_principal
         return_rate = (profit_loss / total_invested_principal) * 100 if total_invested_principal > 0 else 0
@@ -135,7 +141,8 @@ if codes:
         st.warning("유효한 데이터가 없습니다. 종목 코드나 날짜를 확인해 주세요.")
         st.stop()
         
-    data = pd.concat(dfs, axis=1).dropna(how='all')
+    # 데이터 병합 후, NaN 값을 직전 유효 값으로 채우고 모든 열이 NaN인 행만 제거하여 안정성 확보
+    data = pd.concat(dfs, axis=1).ffill().dropna(how='all')
 
     # ==============================================================================
     # 3.1. 총 적립 원금 계산
@@ -178,6 +185,7 @@ if codes:
     
     # 1. 월별 첫 거래일 인덱스 추출 (프레임 최적화)
     data['YearMonth'] = data.index.to_series().dt.to_period('M')
+    # 실제 데이터 인덱스에 존재하는 월별 첫 거래일만 추출하여 애니메이션 프레임으로 사용
     monthly_indices = data.groupby('YearMonth').apply(lambda x: x.index[0]).tolist()
     data = data.drop(columns=['YearMonth'])
     
@@ -186,6 +194,10 @@ if codes:
     # 애니메이션 모드일 경우에만 프레임을 생성
     if st.session_state.display_mode == 'animation':
         for date in monthly_indices:
+            # 해당 날짜가 현재 data.index에 존재하는지 안전하게 확인
+            if date not in data.index:
+                continue
+
             k = data.index.get_loc(date) 
             
             frame_data = []
@@ -231,7 +243,8 @@ if codes:
         layout=go.Layout(
             title="누적 자산 가치 변화",
             xaxis=dict(title="날짜"),
-            yaxis=dict(title="가치 (원)", range=[0, data.max().max() * 1.1], tickformat=',.0f'),
+            # Y축 범위는 전체 데이터의 최댓값보다 약간 크게 설정
+            yaxis=dict(title="가치 (원)", range=[0, data.max().max() * 1.1], tickformat=',.0f'), 
             height=550,
         ),
         frames=frames
@@ -261,7 +274,7 @@ if codes:
     st.plotly_chart(fig, use_container_width=True)
     
     if st.session_state.display_mode == 'animation':
-        st.caption("차트 우측 상단의 '▶️ 재생 시작' 버튼과 시간 슬라이더를 사용하여 애니메이션을 제어하세요.")
+        st.caption("차트 우측 상단(범례 하단)의 '▶️ 재생 시작' 버튼과 시간 슬라이더를 사용하여 애니메이션을 제어하세요.")
     else:
         st.caption("현재 '최종 결과 바로 표시' 모드입니다. 왼쪽 버튼을 눌러 애니메이션 모드로 전환하세요.")
 
