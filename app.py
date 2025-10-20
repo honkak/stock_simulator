@@ -193,9 +193,12 @@ if codes:
                     with chart_placeholder:
                         # 차트 업데이트
                         st.line_chart(current_data_for_anim, use_container_width=True)
-                        st.caption(f"현재 시점: **{dates_list[i].strftime('%Y년 %m월 %d일')}**")
                         
-                    time.sleep(0.01) # 아주 짧은 지연 시간 (0.01초)
+                        # 현재 시점을 표시
+                        current_date_in_anim = dates_list[i].strftime('%Y년 %m월 %d일')
+                        st.caption(f"현재 시점: **{current_date_in_anim}**")
+                        
+                    time.sleep(0.05) # 부드러운 재생을 위해 지연 시간 0.05초로 변경
                 
                 # 애니메이션 완료 후 최종 상태로 업데이트하고 UI 갱신
                 st.session_state.current_index = max_index
