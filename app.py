@@ -294,7 +294,7 @@ if codes:
             )
         )
 
-    # 4. Figure 생성 및 버튼 위치 조정 (변경 없음)
+    # 4. Figure 생성 및 버튼 위치 조정 (수정된 부분 반영)
     initial_max_val = data.iloc[:3].drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1 
     if initial_max_val == 0:
         initial_max_val = monthly_amount_krw * 2 # 최소값 보장
@@ -311,17 +311,15 @@ if codes:
         frames=frames
     )
     
-    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (변경 없음)
+    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (흔들림 방지 수정 반영)
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
                              x=1.21, 
                              y=0.7, 
                              showactive=False,
-                             # ⭐⭐ 수정된 부분: xanchor와 yanchor 추가 ⭐⭐
                              xanchor='left', # x=1.21을 기준으로 버튼을 왼쪽에 고정
                              yanchor='middle', # y=0.7을 기준으로 버튼을 중앙에 고정
-                             # ================================================
                              buttons=[
                                  dict(label="▶️ 재생 시작", 
                                       method="animate", 
@@ -334,8 +332,16 @@ if codes:
                              ])]
         )
 
-    # 5. 차트 표시
-    st.plotly_chart(fig, use_container_width=True)
+    # 5. Plotly Config 설정: 기본 모드바의 애니메이션 버튼을 제거
+    # ⭐⭐ 추가된 부분 ⭐⭐
+    config = {
+        # 기본 모드바(차트 우상단)에서 애니메이션 관련 버튼을 제거합니다.
+        # 이렇게 해야 우리가 추가한 updatemenus 버튼만 남게 됩니다.
+        'modeBarButtonsToRemove': ['zoom2d', 'pan2d', 'select2d', 'lasso2d', 'zoomIn2d', 'zoomOut2d', 'autoScale2d', 'resetScale2d', 'toggleSpikelines', 'hoverCompareCartesian', 'hoverClosestCartesian', 'toImage', 'sendDataToCloud', 'editInChartStudio', 'tableRotation', 'v1hovermode', 'toggleHover', 'resetViewMapbox', 'resetViews', 'resetGeo', 'hoverClosestGeo', 'hoverClosestGl2d', 'hoverClosestPie', 'resetSankeyGroup', 'toggleHover', 'resetGeo', 'hoverClosest3d', 'orbitRotation', 'tableRotation', 'resetCameraDefault3d', 'resetCameraLastSave3d', 'tableRotation', 'zoom3d', 'pan3d', 'orbitRotation', 'tableRotation', 'resetCameraDefault3d', 'resetCameraLastSave3d', 'hoverClosest3d', 'tableRotation', 'zoomInGeo', 'zoomOutGeo', 'resetGeo', 'hoverClosestGeo', 'zoomInMapbox', 'zoomOutMapbox', 'resetMapbox', 'hoverClosestMapbox', 'resetViewMapbox', 'playButton', 'pauseButton']
+    }
+    # 5. 차트 표시 (config 추가)
+    st.plotly_chart(fig, config=config, use_container_width=True)
+    # ==================
     
     # 🎯 [수정] 안내 메시지 단순화
     if st.session_state.display_mode == 'animation':
