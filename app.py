@@ -4,10 +4,10 @@ import datetime
 import pandas as pd
 import plotly.graph_objects as go # Plotly graph_objects 사용
 import time
+import yfinance as yf # ⭐ yfinance 라이브러리 추가
 
 # ==============================================================================
 # 0. Session State 및 UI Helper Functions
-# (생략: 변경 없음)
 # ==============================================================================
 
 # 차트 표시 모드 초기화 ('animation' 또는 'static')
@@ -18,47 +18,68 @@ if 'display_mode' not in st.session_state:
 def is_korean_stock(code):
     return code.isdigit() and len(code) == 6
 
-# 종목 코드 -> 종목명 매핑 딕셔너리 생성 함수 (캐싱 적용)
-@st.cache_data(show_spinner="📜 종목명 리스트 로딩 중...")
-def get_stock_names():
-    """FinanceDataReader를 사용하여 주요 시장의 종목 코드-이름 매핑을 가져옵니다."""
-    try:
-        # 한국 (KRX)
-        df_krx = fdr.StockListing('KRX')
-        krx_map = df_krx.set_index('Symbol')['Name'].to_dict()
-    except Exception:
-        # 데이터 로딩 실패 시 빈 딕셔너리로 대체
-        krx_map = {}
-        # st.warning("KRX 종목명 로딩에 실패했습니다.") 
-
-    try:
-        # 미국 (NASDAQ, NYSE)
-        # QQQ, AAPL 등은 나스닥/뉴욕에 상장된 종목이므로 두 리스트를 병합합니다.
-        df_nasdaq = fdr.StockListing('NASDAQ')
-        df_nyse = fdr.StockListing('NYSE')
-        
-        us_map_nasdaq = df_nasdaq.set_index('Symbol')['Name'].to_dict()
-        us_map_nyse = df_nyse.set_index('Symbol')['Name'].to_dict()
-        
-        # NASDAQ 데이터에 NYSE 데이터를 업데이트 (겹치는 경우 NASDAQ 우선)
-        us_map = us_map_nasdaq
-        us_map.update(us_map_nyse)
-        
-    except Exception:
-        us_map = {}
-        # st.warning("미국 종목명 로딩에 실패했습니다.") 
-
-    # KRX 맵과 US 맵을 결합 (겹치는 코드는 KRX가 우선)
-    stock_name_map = {}
-    stock_name_map.update(us_map) # 미국 주식 먼저 넣고
-    stock_name_map.update(krx_map) # 한국 주식으로 덮어씁니다.
+# ⭐ 종목 코드 -> 야후 파이낸스 티커 변환 헬퍼
+def get_yf_ticker(code):
+    """종목 코드를 받아 yfinance에서 인식할 수 있는 티커로 변환합니다."""
+    code = code.strip().upper()
+    if not code:
+        return None
     
-    # 수동 종목명 추가 (검색 결과 참조)
-    stock_name_map['QQQ'] = 'Invesco QQQ Trust, Series 1'
-    stock_name_map['005930'] = '삼성전자'
-    stock_name_map['AAPL'] = 'Apple Inc.'
+    # 한국 주식 (6자리 숫자)
+    if is_korean_stock(code):
+        return f"{code}.KS"
+    
+    # 주요 지수 (yfinance에서 ^를 사용하는 경우가 일반적)
+    index_map = {
+        'DJI': '^DJI', 'IXIC': '^IXIC', 'GSPC': '^GSPC', 'VIX': '^VIX',
+        # KRX 지수는 FinanceDataReader에서 지원하지만, 종목명 조회를 위해 yfinance가 인식 가능한 코드로 변환하지 않습니다. 
+        # (KRX 지수 코드는 fdr로만 가격을 가져옴)
+    }
+    return index_map.get(code, code) # 매핑된 지수 코드를 반환하거나, 그대로 (미국 주식/ETF) 반환
 
+# ⭐ yfinance를 사용하여 종목명 조회 함수 (캐싱 적용)
+@st.cache_data(show_spinner="📜 종목 정보를 불러오는 중...")
+def get_stock_names_via_yf(codes_list):
+    """yfinance를 사용하여 종목 코드-이름 매핑을 가져옵니다."""
+    stock_name_map = {}
+    
+    # Fdr로 가져올 수 있는 KRX 종목 목록 (종목명 매핑을 돕기 위해 사용, yfinance의 shortName이 부정확할 때 대비)
+    # yfinance가 해외 종목명을 더 잘 가져오므로, KRX 종목명만 fdr의 StockListing으로 보강합니다.
+    krx_name_map = {}
+    try:
+        df_krx = fdr.StockListing('KRX')
+        krx_name_map = df_krx.set_index('Symbol')['Name'].to_dict()
+    except Exception:
+        pass # fdr 로딩 실패 시 무시
+
+    for code in codes_list:
+        yf_ticker = get_yf_ticker(code)
+        
+        # 1. KRX 종목명 (fdr 보조)
+        if is_korean_stock(code) and code in krx_name_map:
+            stock_name_map[code] = krx_name_map[code]
+            continue
+            
+        # 2. yfinance 조회
+        if yf_ticker:
+            try:
+                stock = yf.Ticker(yf_ticker)
+                # 'shortName' 또는 'longName'을 시도
+                stock_name = stock.info.get('shortName', stock.info.get('longName', '이름을 찾을 수 없습니다.'))
+                
+                # 티커가 한국 종목(.KS)인데 이름이 부정확한 경우 보조 맵을 다시 확인
+                if is_korean_stock(code) and stock_name in ['이름을 찾을 수 없습니다.', '']:
+                    stock_name = krx_name_map.get(code, '이름을 찾을 수 없습니다.')
+                    
+                stock_name_map[code] = stock_name if stock_name else '이름을 찾을 수 없습니다.'
+                
+            except Exception:
+                stock_name_map[code] = '이름을 찾을 수 없습니다.'
+        else:
+            stock_name_map[code] = '이름을 찾을 수 없습니다.'
+            
     return stock_name_map
+
 
 # 환율 데이터 (USD/KRW)를 가져오는 헬퍼 함수
 @st.cache_data
@@ -73,7 +94,7 @@ def get_usd_krw_rate(start_date, end_date):
         return pd.Series(1300.0, index=pd.to_datetime([])) # 기본값 1,300 KRW/USD 가정
 
 # 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수
-def display_final_summary_table(data, principal_series, monthly_amount, stock_name_map): # ⭐ stock_name_map 인수 추가
+def display_final_summary_table(data, principal_series, monthly_amount, stock_name_map):
     """최종 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 표시합니다."""
 
     valid_data_length = len(principal_series.dropna())
@@ -104,13 +125,9 @@ def display_final_summary_table(data, principal_series, monthly_amount, stock_na
     # 2. 월 적금 3% 이율 (단리) 행 추가
     if num_months > 0:
         # 단리 적금 최종 가치 계산
-        # 공식: Sum(월 적립액 * (1 + 월 이율 * (총 개월 수 - k))) for k=1 to 총 개월 수
         deposit_final_value = 0
         for k in range(1, num_months + 1):
-            # n = 남은 기간 (개월 수) - 투자 횟수 (k)를 사용한 단리 계산
-            # 실제 적금에서는 월별로 이자가 붙기 때문에, (N - k) 기간의 이자를 더합니다.
             interest_period = num_months - k
-            # 원금 + (원금 * 월 이율 * 이자 적용 기간)
             single_deposit_value = monthly_amount * (1 + monthly_interest_rate * interest_period)
             deposit_final_value += single_deposit_value
 
@@ -131,8 +148,8 @@ def display_final_summary_table(data, principal_series, monthly_amount, stock_na
             continue
 
         # 종목 코드에 종목명 추가하여 포맷팅
-        name = stock_name_map.get(code, '알 수 없음')
-        display_name = f"{code} ({name})" # ⭐ 종목명($코드$) 포맷
+        name = stock_name_map.get(code, '이름을 찾을 수 없습니다.')
+        display_name = f"{code} ({name})" # 종목코드 (종목명) 포맷
 
         # 마지막 유효 값 (최종 자산 가치)
         final_value = data[code].dropna().iloc[-1]
@@ -141,7 +158,7 @@ def display_final_summary_table(data, principal_series, monthly_amount, stock_na
         return_rate = (profit_loss / total_invested_principal) * 100 if total_invested_principal > 0 else 0
 
         investment_summary.append({
-            '종목': display_name, # ⭐ 포맷팅된 이름 사용
+            '종목': display_name,
             '총 투자 원금 (원)': f"{total_invested_principal:,.0f}",
             '현재 자산 가치 (원)': f"{final_value:,.0f}",
             '수익 / 손실 (원)': f"{profit_loss:,.0f}",
@@ -168,6 +185,7 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate
     rate_series (USD/KRW)를 사용하여 미국 주식의 환율 변동을 반영합니다.
     """
     try:
+        # FinanceDataReader를 사용하여 주가 데이터 가져오기 (fdr이 넓은 범위의 데이터를 잘 가져옴)
         df = fdr.DataReader(code, start_date, end_date)
         close = df['Close']
         cumulative = pd.Series(0.0, index=close.index)
@@ -220,7 +238,6 @@ def simulate_monthly_investment(code, start_date, end_date, monthly_amount, rate
         return cumulative[cumulative.cumsum() != 0]
 
     except Exception as e:
-        # st.error(f"디버깅용 - simulate_monthly_investment 에러 for {code}: {e}")
         st.warning(f"⚠️ 종목 코드 **{code}**의 데이터를 불러오는 데 문제가 발생했습니다.")
         return None
 
@@ -250,11 +267,38 @@ monthly_amount_krw = st.number_input(
     step=10000
 )
 
-# 1.3. 종목 코드 입력
+# 1.3. 종목 코드 입력 및 종목명 표시
+# ⭐ 입력된 코드를 모아서 종목명 맵을 한 번에 로드합니다.
 col_code1, col_code2, col_code3 = st.columns(3)
-with col_code1: code1 = st.text_input('종목코드 1', value='QQQ', placeholder='(예시) QQQ')
-with col_code2: code2 = st.text_input('종목코드 2', value='005930', placeholder='(예시) 005930')
-with col_code3: code3 = st.text_input('종목코드 3', value='AAPL', placeholder='(예시) AAPL')
+codes_for_name = []
+
+with col_code1: 
+    code1 = st.text_input('종목코드 1', value='QQQ', placeholder='(예시) QQQ')
+    codes_for_name.append(code1.strip())
+with col_code2: 
+    code2 = st.text_input('종목코드 2', value='005930', placeholder='(예시) 005930')
+    codes_for_name.append(code2.strip())
+with col_code3: 
+    code3 = st.text_input('종목코드 3', value='AAPL', placeholder='(예시) AAPL')
+    codes_for_name.append(code3.strip())
+
+# 유효한 코드만 필터링
+codes_for_name = [c for c in codes_for_name if c] 
+
+# ⭐ yfinance를 사용하여 종목명 매핑 데이터 로드 (캐싱 적용)
+stock_name_map = get_stock_names_via_yf(codes_for_name)
+
+# 종목명 표시
+col_name1, col_name2, col_name3 = st.columns(3)
+with col_name1:
+    name1 = stock_name_map.get(code1.strip(), '이름을 찾을 수 없습니다.')
+    st.markdown(f"**{name1}**" if name1 != '이름을 찾을 수 없습니다.' else f'<span style="color:red;">{name1}</span>', unsafe_allow_html=True)
+with col_name2:
+    name2 = stock_name_map.get(code2.strip(), '이름을 찾을 수 없습니다.')
+    st.markdown(f"**{name2}**" if name2 != '이름을 찾을 수 없습니다.' else f'<span style="color:red;">{name2}</span>', unsafe_allow_html=True)
+with col_name3:
+    name3 = stock_name_map.get(code3.strip(), '이름을 찾을 수 없습니다.')
+    st.markdown(f"**{name3}**" if name3 != '이름을 찾을 수 없습니다.' else f'<span style="color:red;">{name3}</span>', unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -262,15 +306,12 @@ codes = [c.strip() for c in [code1, code2, code3] if c.strip()]
 
 if codes:
     
-    # ⭐ 종목명 매핑 데이터 로드
-    stock_name_map = get_stock_names()
-
     # 환율 데이터 선취 및 캐싱
     usd_krw_rate_series = get_usd_krw_rate(start_date, end_date)
 
     dfs = []
     for c in codes:
-        # 환율 데이터를 시뮬레이션 함수에 전달
+        # FinanceDataReader로 주가 데이터를 가져옴
         series = simulate_monthly_investment(c, start_date, end_date, monthly_amount_krw, usd_krw_rate_series)
         if series is not None:
             dfs.append(series)
@@ -299,7 +340,6 @@ if codes:
     # ==============================================================================
     # 3.2. 제목 및 버튼 (수정됨)
     # ==============================================================================
-    # 🎯 [수정] col_title만 남기고 col_button 제거
     st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
 
     # ==============================================================================
@@ -421,10 +461,11 @@ if codes:
     # 6. 최종 요약 테이블 표시
     # ----------------------------------------------------------
     # monthly_amount_krw, stock_name_map를 추가 인수로 전달
-    display_final_summary_table(data, cumulative_principal, monthly_amount_krw, stock_name_map) # ⭐ stock_name_map 전달
+    display_final_summary_table(data, cumulative_principal, monthly_amount_krw, stock_name_map)
 
 # ==============================================================================
 # 4. 종목 코드 참고 자료 섹션 (추가됨)
+# (변경 없음)
 # ==============================================================================
 
 # 수평선 추가
