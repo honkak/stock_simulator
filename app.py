@@ -12,9 +12,7 @@ import time
 # 차트 표시 모드 초기화 ('animation' 또는 'static')
 if 'display_mode' not in st.session_state:
     st.session_state.display_mode = 'animation'
-# 🎯 [수정] 최종 결과 표시 상태 (초기: False)
-if 'show_final_summary' not in st.session_state:
-    st.session_state.show_final_summary = False 
+# 🎯 [제거] st.session_state.show_final_summary 상태 관리를 제거합니다.
 
 # 한국 주식 코드 판별 헬퍼 (6자리 숫자로 판단)
 def is_korean_stock(code):
@@ -76,6 +74,7 @@ def display_final_summary_table(data, principal_series):
         })
 
     if investment_summary:
+        st.markdown("---") # 시각적 분리를 위해 추가
         summary_df = pd.DataFrame(investment_summary)
         st.markdown("#### 최종 시뮬레이션 요약")
         st.dataframe(
@@ -204,9 +203,9 @@ if codes:
         
     # 데이터 병합 후, NaN 값을 직전 유효 값으로 채우고 모든 열이 NaN인 행만 제거하여 안정성 확보
     data = pd.concat(dfs, axis=1).ffill().dropna(how='all')
-
+    
     # ==============================================================================
-    # 3.1. 총 적립 원금 계산
+    # 3.1. 총 적립 원금 계산 (변경 없음)
     # ==============================================================================
     cumulative_principal = pd.Series(0.0, index=data.index)
     total = 0
@@ -236,14 +235,12 @@ if codes:
             key='toggle_result',
             help="차트 표시 모드를 전환합니다."
         ):
-            # 모드 전환 시 최종 결과 표시 상태도 초기화
+            # 모드 전환만 수행
             st.session_state.display_mode = 'static' if st.session_state.display_mode == 'animation' else 'animation'
-            st.session_state.show_final_summary = False # 🎯 [수정] 상태 초기화
             st.rerun() 
 
-
     # ==============================================================================
-    # 3.3. Plotly go.Figure 기반 애니메이션 (월별 프레임 최적화 및 동적 스케일링)
+    # 3.3. Plotly go.Figure 기반 애니메이션 (변경 없음)
     # ==============================================================================
     
     # 1. 월별 첫 거래일 인덱스 추출 (프레임 최적화)
@@ -312,7 +309,7 @@ if codes:
             )
         )
 
-    # 4. Figure 생성 및 버튼 위치 조정
+    # 4. Figure 생성 및 버튼 위치 조정 (변경 없음)
     initial_max_val = data.iloc[:3].drop(columns=['총 적립 원금'], errors='ignore').max().max() * 1.1 
     if initial_max_val == 0:
         initial_max_val = monthly_amount_krw * 2 # 최소값 보장
@@ -329,7 +326,7 @@ if codes:
         frames=frames
     )
     
-    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (차트 오른쪽 바깥으로 확실히 이동)
+    # 애니메이션 모드일 때만 Plotly 재생 버튼 추가 (변경 없음)
     if st.session_state.display_mode == 'animation':
         fig.update_layout(
             updatemenus=[dict(type="buttons",
@@ -351,25 +348,14 @@ if codes:
     # 5. 차트 표시
     st.plotly_chart(fig, use_container_width=True)
     
-    # 🎯 [추가] 차트 아래에 최종 결과 표시 버튼 배치
+    # 🎯 [수정] 안내 메시지 단순화
     if st.session_state.display_mode == 'animation':
         st.caption("차트 우측 상단의 '▶️ 재생 시작' 버튼으로 애니메이션을 시청하세요.")
-        
-        # 🎯 [추가] 애니메이션 시청 후 최종 결과표를 불러오는 버튼
-        if st.button("✅ 차트 애니메이션 완료, 최종 결과표 표시", key='show_final_btn', use_container_width=True):
-            st.session_state.show_final_summary = True
-            st.rerun() # 최종 결과표 표시를 위해 재실행
-
     else:
         st.caption("현재 '최종 결과 바로 표시' 모드입니다. 왼쪽 버튼을 눌러 애니메이션 모드로 전환하세요.")
 
     # ----------------------------------------------------------
     # 6. 최종 요약 테이블 표시
     # ----------------------------------------------------------
-    if st.session_state.display_mode == 'static' or st.session_state.show_final_summary:
-        # 정적 모드이거나, 애니메이션 모드에서 최종 결과 표시 버튼이 눌렸을 때만 표시
-        display_final_summary_table(data, cumulative_principal)
-    
-    elif st.session_state.display_mode == 'animation' and not st.session_state.show_final_summary:
-        st.markdown("---")
-        st.info("⬆️ **차트 재생을 완료한 후, 위의 '✅ 최종 결과표 표시' 버튼을 눌러주세요.**")
+    # 🎯 [수정] show_final_summary 상태 없이, 데이터가 로딩되면 항상 최종 요약표를 표시
+    display_final_summary_table(data, cumulative_principal)
