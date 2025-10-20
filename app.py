@@ -2,7 +2,6 @@ import streamlit as st
 import FinanceDataReader as fdr
 import datetime
 import pandas as pd
-import time # 애니메이션 속도 조절을 위해 time 모듈 추가
 import plotly.express as px # Plotly 라이브러리 추가
 
 # ==============================================================================
@@ -62,9 +61,9 @@ st.markdown("---")
 codes = [code1.strip(), code2.strip(), code3.strip()]
 codes = [code for code in codes if code] # 빈 코드 제거
 
-# Session State 초기화 (애니메이션 상태 저장)
-if 'current_index' not in st.session_state:
-    st.session_state.current_index = 0
+# 이전 버전에서 사용되던 애니메이션 상태 변수는 제거합니다.
+# if 'current_index' not in st.session_state:
+#     st.session_state.current_index = 0
 
 # ==============================================================================
 # 2. 적립식 시뮬레이션 로직 (Full Range 데이터 계산)
@@ -120,23 +119,49 @@ def run_monthly_installment_simulation(code, start_date, end_date, monthly_amoun
 
 def create_plotly_chart(data, title="적립식 투자 시뮬레이션 결과"):
     """
-    Plotly Express를 사용하여 누적 자산 가치 차트를 생성합니다.
+    Plotly Express를 사용하여 누적 자산 가치 차트를 생성하고 애니메이션 프레임을 설정합니다.
     """
-    # Plotly Express를 위해 데이터 구조를 Long Format으로 변환
-    df_long = data.reset_index().melt(
-        id_vars='index', 
-        var_name='종목코드', 
-        value_name='누적 자산 가치 (원)'
-    ).rename(columns={'index': '날짜'})
+    # 1. 누적 데이터프레임 (Wide format) 준비
+    data_wide = data.copy()
+    data_wide.index.name = '날짜'
     
-    # Plotly Express 차트 생성
+    # 2. Plotly animation_frame을 위한 누적 데이터 구조 재가공 (트릭)
+    # Plotly는 각 프레임에 대해 전체 데이터를 표시하므로, 
+    # 차트가 시간에 따라 그려지도록 누적된 데이터를 담는 새로운 구조가 필요합니다.
+    frames_data = []
+    
+    for i in range(len(data_wide)):
+        # 현재 프레임의 데이터 (i번째 날까지)
+        frame_df = data_wide.iloc[:i + 1].copy()
+        
+        # Long Format으로 변환
+        frame_df_long = frame_df.reset_index().melt(
+            id_vars='날짜', 
+            var_name='종목코드', 
+            value_name='누적 자산 가치 (원)'
+        )
+        
+        # 이 프레임이 나타내는 '날짜'를 애니메이션 프레임 키로 사용
+        frame_df_long['Animation Date'] = data_wide.index[i].strftime('%Y-%m-%d')
+        frames_data.append(frame_df_long)
+
+    # 모든 프레임 데이터를 합칩니다.
+    df_anim = pd.concat(frames_data)
+    
+    # --- Plotly Chart Creation ---
+    
     fig = px.line(
-        df_long.dropna(),
+        df_anim.dropna(subset=['누적 자산 가치 (원)']), 
         x='날짜',
         y='누적 자산 가치 (원)',
         color='종목코드',
-        title=title
+        animation_frame='Animation Date', # 네이티브 애니메이션 적용
+        title=title,
     )
+    
+    # Y축 범위 고정 (애니메이션 중 차트가 출렁이는 현상 방지)
+    y_max = df_anim['누적 자산 가치 (원)'].max() * 1.05 if not df_anim.empty else 1000000 
+    fig.update_yaxes(range=[0, y_max])
     
     # 레이아웃 개선
     fig.update_layout(
@@ -145,66 +170,93 @@ def create_plotly_chart(data, title="적립식 투자 시뮬레이션 결과"):
         hovermode="x unified",
         legend_title_text='종목',
         margin=dict(l=20, r=20, t=40, b=20),
-        height=500
+        height=500,
+        # 애니메이션 속도 및 부드러운 전환 설정
+        updatemenus=[
+            dict(
+                type='buttons',
+                showactive=False,
+                y=0,
+                x=0.01,
+                xanchor='left',
+                yanchor='bottom',
+                pad=dict(t=10, r=10),
+                buttons=[
+                    dict(
+                        label='▶️ 재생 시작',
+                        method='animate',
+                        args=[None, {
+                            'frame': {'duration': 10, 'redraw': True}, # 프레임당 10ms (속도)
+                            'fromcurrent': True,
+                            'transition': {'duration': 1, 'easing': 'linear'} # 부드러운 전환
+                        }]
+                    )
+                ]
+            )
+        ]
+        # Plotly의 기본 슬라이더는 자동으로 표시되므로 별도로 설정하지 않습니다.
     )
     
     # Y축에 통화 형식 포맷 적용
     fig.update_yaxes(tickformat=',.0f')
 
-    # '총 적립 원금' 라인에 대한 특정 스타일링 적용 (밝은 회색 점선)
+    # '총 적립 원금' 라인 스타일을 모든 프레임에 적용 (Plotly 애니메이션 필요)
+    for frame in fig.frames:
+        for trace in frame.data:
+            if trace.name == '총 적립 원금':
+                trace.update(
+                    line=dict(color='lightgray', width=2, dash='dash'),
+                    opacity=0.8,
+                    hovertemplate="날짜: %{x}<br>원금: %{y:,.0f} 원<extra></extra>"
+                )
+    
+    # 초기 데이터에도 스타일 적용
     for trace in fig.data:
         if trace.name == '총 적립 원금':
             trace.update(
                 line=dict(color='lightgray', width=2, dash='dash'),
                 opacity=0.8,
-                hovertemplate="날짜: %{x}<br>원금: %{y:,.0f} 원<extra></extra>" # Custom hover info
+                hovertemplate="날짜: %{x}<br>원금: %{y:,.0f} 원<extra></extra>"
             )
-    
+
     return fig
 
 # ==============================================================================
-# 4. 시뮬레이션 실행 및 결과 표시 (애니메이션 포함)
+# 4. 시뮬레이션 실행 및 결과 표시
 # ==============================================================================
 
-# 시뮬레이션 요약 테이블을 업데이트하는 헬퍼 함수
-def update_summary_table(current_data, cumulative_principal, current_index, monthly_amount_krw, placeholder):
-    """현재 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 지정된 Placeholder에 표시합니다."""
+# 시뮬레이션 요약 테이블을 계산하고 표시하는 헬퍼 함수
+def display_final_summary_table(combined_data_full, cumulative_principal, max_index, monthly_amount_krw):
+    """최종 시점의 데이터를 바탕으로 투자 요약 테이블을 계산하고 표시합니다."""
     
-    # current_principal은 현재 인덱스까지의 원금 데이터
-    if current_index >= 0:
-        total_invested_principal_at_current_date = cumulative_principal.iloc[current_index]
-    else:
-        total_invested_principal_at_current_date = 0
+    # 최종 시점의 투자 원금
+    total_invested_principal_at_current_date = cumulative_principal.iloc[max_index]
 
     investment_summary = []
     
-    # --- 수정된 부분: 총 적립 원금 행을 첫 번째로 추가 ---
+    # 1. 총 적립 원금 행을 첫 번째로 추가
     principal_value = total_invested_principal_at_current_date
     if principal_value > 0:
         investment_summary.append({
             '종목': '총 적립 원금',
             '총 투자 원금 (원)': f"{principal_value:,.0f}",
             '현재 자산 가치 (원)': f"{principal_value:,.0f}",
-            '수익 / 손실 (원)': f"{0:,.0f}", # 원금=가치이므로 수익/손실은 0
-            '수익률 (%)': f"{0.00:,.2f}%"  # 수익률은 0%
+            '수익 / 손실 (원)': f"{0:,.0f}", 
+            '수익률 (%)': f"{0.00:,.2f}%"
         })
-    # --- 수정된 부분 끝 ---
 
-
-    for code in current_data.columns:
-        # '총 적립 원금' 열은 요약 계산에서 제외 (이미 위에서 처리함)
+    # 2. 각 종목별 최종 결과 추가
+    for code in combined_data_full.columns:
         if code == '총 적립 원금':
             continue
 
-        series = current_data[code].dropna()
+        series = combined_data_full[code].dropna()
         if series.empty:
             continue
         
-        # 마지막 유효 값을 최종 자산 가치로 사용
         final_value = series.iloc[-1]
         
         profit_loss = final_value - total_invested_principal_at_current_date
-        # 원금이 0보다 클 때만 수익률 계산
         return_rate = (profit_loss / total_invested_principal_at_current_date) * 100 if total_invested_principal_at_current_date > 0 else 0
 
         investment_summary.append({
@@ -217,13 +269,14 @@ def update_summary_table(current_data, cumulative_principal, current_index, mont
 
     if investment_summary:
         summary_df = pd.DataFrame(investment_summary)
-        with placeholder.container(): # Use placeholder to update the table
-            st.markdown("#### 누적 투자 요약")
-            st.dataframe(
-                summary_df, 
-                hide_index=True,
-                use_container_width=True,
-            )
+        st.markdown("#### 최종 시뮬레이션 요약")
+        st.dataframe(
+            summary_df, 
+            hide_index=True,
+            use_container_width=True,
+        )
+
+# --- 메인 실행 블록 ---
 
 if codes:
     st.markdown("<h3 style='font-size: 18px; text-align: left;'>📊 적립식 투자 시뮬레이션 결과</h3>", unsafe_allow_html=True)
@@ -241,21 +294,16 @@ if codes:
         if result_series is not None and not result_series.empty:
             simulation_results.append(result_series)
 
-    # 4.2. 결과 데이터프레임 병합 및 애니메이션 컨트롤
+    # 4.2. 결과 데이터프레임 병합
     if simulation_results:
         combined_data_full = pd.concat(simulation_results, axis=1).dropna(how='all')
-        dates_list = combined_data_full.index.tolist()
-        max_index = len(dates_list) - 1
         
-        # 데이터가 없으면 진행 불가
+        max_index = len(combined_data_full) - 1
+        
         if max_index < 0:
             st.info("선택된 기간 및 코드로 유효한 거래일 데이터가 없습니다.")
             st.stop()
             
-        # 세션 상태 초기 인덱스 보정
-        if st.session_state.current_index > max_index:
-            st.session_state.current_index = max_index
-        
         # --- 총 적립 원금 라인 계산 ---
         cumulative_principal = pd.Series(0.0, index=combined_data_full.index)
         total_invested_principal = 0.0
@@ -264,7 +312,6 @@ if codes:
         for date in combined_data_full.index:
             current_month = date.month
             
-            # 매월 첫 거래일에만 원금 추가
             if current_month != last_invested_month:
                 total_invested_principal += monthly_amount_krw
                 last_invested_month = current_month
@@ -274,99 +321,35 @@ if codes:
         # 데이터프레임에 '총 적립 원금' 라인 추가
         combined_data_full['총 적립 원금'] = cumulative_principal
         
-        # --- 컨트롤 패널 ---
-        st.markdown("<h4 style='font-size: 16px; margin-top: 15px;'>▶️ 시뮬레이션 재생 컨트롤</h4>", unsafe_allow_html=True)
+        # --- 컨트롤 패널 (Plotly 내장 재생 기능 사용) ---
+        st.markdown("<h4 style='font-size: 16px; margin-top: 15px;'>▶️ 애니메이션 재생 컨트롤 (차트 내부의 재생 버튼 사용)</h4>", unsafe_allow_html=True)
 
-        col_play, col_instant = st.columns([1, 1])
+        col_instant = st.columns(1)[0] # 버튼 하나만 남기고 구조 단순화
 
-        # 4.2.1. 최종 결과 바로 표시 버튼
+        # '최종 결과 바로 표시' 버튼은 Plotly의 애니메이션을 건너뛰고 최종 정적 상태를 표시합니다.
         with col_instant:
-            if st.button('최종 결과 바로 표시 (시간 무시)', use_container_width=True, key='instant_result'):
-                st.session_state.current_index = max_index
-                # st.rerun() 대신 인덱스만 업데이트하고 바로 아래에서 그 결과를 그림
-
-        # 4.2.2. 날짜 슬라이더 (수동 재생 및 시작점 설정)
-        display_index = st.slider(
-            '차트 표시 날짜를 선택하세요',
-            min_value=0,
-            max_value=max_index,
-            value=st.session_state.current_index,
-            step=1,
-            key='date_slider'
-        )
-        
-        # 슬라이더 값 변경 시 세션 상태 업데이트
-        st.session_state.current_index = display_index
-        
-        # 현재 시점을 표시
-        current_date_display = dates_list[st.session_state.current_index].strftime('%Y년 %m월 %d일')
-        st.caption(f"**현재 시뮬레이션 시점:** {current_date_display}")
-        
-        # 4.2.3. 차트 및 요약 테이블을 업데이트할 Placeholder 설정
-        chart_viz_placeholder = st.empty()        # 차트 시각화
-        chart_date_caption_placeholder = st.empty() # 애니메이션 날짜 캡션
-        summary_placeholder = st.empty()            # 요약 테이블 시각화
-        
-        # 4.2.4. 재생 시작 버튼 (애니메이션 루프)
-        with col_play:
-            if st.button('재생 시작 (애니메이션)', use_container_width=True, key='start_play'):
-                # 루프가 돌아가는 동안 UI를 막고 애니메이션을 표시
-                for i in range(st.session_state.current_index, max_index + 1, 5): # 5일 간격으로 빠르게 진행 (더 부드럽게)
-                    
-                    # 현재 데이터 슬라이싱
-                    current_data_for_anim = combined_data_full.iloc[:i + 1]
-                    
-                    # 1. 차트 업데이트
-                    with chart_viz_placeholder.container():
-                        fig = create_plotly_chart(current_data_for_anim)
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                    # 2. 날짜 캡션 업데이트
-                    with chart_date_caption_placeholder:
-                        current_date_in_anim = dates_list[i].strftime('%Y년 %m월 %d일')
-                        st.caption(f"현재 시점: **{current_date_in_anim}**")
-                    
-                    # 3. 요약 테이블 업데이트 (실시간)
-                    if i > 0: # 데이터가 있을 때만 표시
-                        update_summary_table(
-                            current_data_for_anim, 
-                            cumulative_principal, 
-                            i, 
-                            monthly_amount_krw, 
-                            summary_placeholder
-                        )
-                    
-                    time.sleep(0.05) # 부드러운 재생을 위해 지연 시간 0.05초 유지
-                
-                # 애니메이션 완료 후 최종 상태로 업데이트하고 UI 갱신
-                st.session_state.current_index = max_index
-                st.rerun() # Ensure the slider updates to max_index and static view is correct
-                
-        # --- 차트 및 요약 결과 표시 ---
-        
-        # 현재 슬라이더/애니메이션 상태에 따라 데이터 슬라이싱
-        current_data = combined_data_full.iloc[:st.session_state.current_index + 1]
-
-        # 4.3. 차트 표시
-        with chart_viz_placeholder:
-            fig = create_plotly_chart(current_data)
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with chart_date_caption_placeholder:
-            st.caption(f"차트 시점: **{current_date_display}**") # 애니메이션 후 또는 슬라이더 조작 시 캡션
-
-        # 4.4. 최종 결과 요약 계산 및 표시 (슬라이더 조작 시 또는 초기 로딩 시)
-        if st.session_state.current_index > 0:
-            update_summary_table(
-                current_data, 
-                cumulative_principal, 
-                st.session_state.current_index, 
-                monthly_amount_krw, 
-                summary_placeholder
+            st.button(
+                '최종 결과 바로 표시 (시간 무시)', 
+                use_container_width=True, 
+                key='instant_result',
+                help="애니메이션을 건너뛰고 최종 시점의 차트와 요약 정보를 즉시 표시합니다."
             )
-        else:
-            # 초기 로딩 시 또는 인덱스가 0일 때 테이블 비우기
-            summary_placeholder.empty()
+        
+        # --- Chart Display ---
+        
+        # Plotly Animation Chart (Full Data)
+        fig_anim = create_plotly_chart(combined_data_full)
+        st.plotly_chart(fig_anim, use_container_width=True)
+        
+        # --- Final Summary Table ---
+        
+        # Plotly 애니메이션 사용 시 실시간 업데이트는 불가능하므로, 최종 결과만 표시합니다.
+        display_final_summary_table(
+            combined_data_full, 
+            cumulative_principal, 
+            max_index, 
+            monthly_amount_krw
+        )
         
     else:
         st.info("선택된 기간 및 코드로 시뮬레이션할 유효한 데이터가 없습니다.")
