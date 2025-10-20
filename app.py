@@ -150,6 +150,15 @@ def create_plotly_chart(data, title="적립식 투자 시뮬레이션 결과"):
     
     # Y축에 통화 형식 포맷 적용
     fig.update_yaxes(tickformat=',.0f')
+
+    # '총 적립 원금' 라인에 대한 특정 스타일링 적용 (밝은 회색 점선)
+    for trace in fig.data:
+        if trace.name == '총 적립 원금':
+            trace.update(
+                line=dict(color='lightgray', width=2, dash='dash'),
+                opacity=0.8,
+                hovertemplate="날짜: %{x}<br>원금: %{y:,.0f} 원<extra></extra>" # Custom hover info
+            )
     
     return fig
 
@@ -187,6 +196,26 @@ if codes:
         # 세션 상태 초기 인덱스 보정
         if st.session_state.current_index > max_index:
             st.session_state.current_index = max_index
+        
+        # --- NEW: 총 적립 원금 라인 계산 ---
+        cumulative_principal = pd.Series(0.0, index=combined_data_full.index)
+        total_invested_principal = 0.0
+        last_invested_month = -1
+
+        for date in combined_data_full.index:
+            current_month = date.month
+            
+            # 매월 첫 거래일에만 원금 추가
+            if current_month != last_invested_month:
+                total_invested_principal += monthly_amount_krw
+                last_invested_month = current_month
+            
+            cumulative_principal[date] = total_invested_principal
+        
+        # 데이터프레임에 '총 적립 원금' 라인 추가
+        combined_data_full['총 적립 원금'] = cumulative_principal
+        # --- END NEW LOGIC ---
+
         
         # --- 컨트롤 패널 ---
         st.markdown("<h4 style='font-size: 16px; margin-top: 15px;'>▶️ 시뮬레이션 재생 컨트롤</h4>", unsafe_allow_html=True)
@@ -268,13 +297,17 @@ if codes:
                 investment_summary = []
 
                 for code in current_data.columns:
+                    # '총 적립 원금' 열은 요약 계산에서 제외
+                    if code == '총 적립 원금':
+                        continue
+
                     series = current_data[code].dropna()
                     if series.empty:
                         continue
 
                     # 투자 원금 계산: 데이터가 존재하는 월 수
-                    invested_months = series.index.to_series().dt.to_period('M').nunique()
-                    total_invested_principal = invested_months * monthly_amount_krw
+                    # '총 적립 원금' 시리즈의 마지막 값을 사용
+                    total_invested_principal = cumulative_principal[series.index[-1]]
                     
                     final_value = series.iloc[-1] if not series.empty else 0
                     profit_loss = final_value - total_invested_principal
